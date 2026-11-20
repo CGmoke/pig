@@ -1,0 +1,59 @@
+# 用法：
+#   docker compose -f docker/compose.yaml build
+#   docker compose -f docker/compose.yaml run --rm sim          # 进交互 shell
+#   docker compose -f docker/compose.yaml run --rm sim \
+#       /isaac-sim/python.sh -c "print('ok')"                    # 冒烟测试
+#
+# 提示：compose 的 GPU 申请写在 deploy.reservations 下，docker compose v2 支持。
+# 若你的 compose 版本不认，退化成裸 docker run（见 docs/开发环境搭建.md 第 4 节）。
+
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: Dockerfile.sim
+    image: bajie/sim:humble45
+    container_name: bajie-sim
+
+    # host 网络：Isaac Sim 的 WebRTC livestream、DDS 发现、ros2 通信都省事
+    network_mode: host
+    # ipc=host + 大 shm：绕开 FastDDS 跨容器共享内存导致的"能 list 收不到数据"
+    ipc: host
+    shm_size: "2gb"
+
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      # 8G 显存笔记本建议打开，减少显存峰值
+      - OMP_NUM_THREADS=4
+
+    volumes:
+      # 代码仓库整体挂进去：USD 里的相对资源路径、urdf 路径都按 /workspace 走
+      - ../:/workspace
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:ro
+      # shader/扩展缓存：首次编译约 4 分钟，持久化后冷启动快很多
+      - ../.ov-cache:/root/.cache/ov
+      - ../.ov-data:/root/.local/share/ov
+      - isaac-logs:/root/.nvidia-omniverse/logs
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility, graphics, compute, video]
+
+    stdin_open: true
+    tty: true
+    command: ["/bin/bash"]
+
+volumes:
+  isaac-ov-cache:
+  isaac-kit-cache:
+  isaac-logs:

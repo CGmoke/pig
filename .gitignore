@@ -1,0 +1,33 @@
+# colcon 编译输出
+build/
+install/
+log/
+
+# 构建日志
+logs/
+
+# 生成的 URDF（由 scripts/expand_urdf.sh 从 xacro 展开，可复现）
+generated/
+
+# expand_urdf.sh 构造的最小 ament 前缀
+.prefix/
+
+# Omniverse / Isaac Sim 缓存与数据
+.ov-cache/
+.ov-data/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# IDE 与编辑器
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+docs/
+scripts/

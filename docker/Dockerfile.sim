@@ -1,0 +1,74 @@
+# Isaac Sim 4.5 + ROS 2 Humble 一体化开发镜像
+# 为什么必须以官方镜像为底座：ROS 2 Bridge 的 .so 是针对 Isaac Sim 自带的
+# Python 3.10 / Omniverse 运行时预编译的，自建 22.04 镜像重装 Isaac Sim 反而更麻烦。
+#
+# 构建：docker compose -f docker/compose.yaml build
+
+ARG ISAACSIM_IMAGE=nvcr.io/nvidia/isaac-sim:4.5.0
+FROM ${ISAACSIM_IMAGE}
+
+USER root
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+# 官方镜像的 ENTRYPOINT 是 /isaac-sim/runheadless.sh，会吞掉你给的命令
+# （docker run image bash 实际会执行 runheadless.sh bash）。这里清空，
+# 让 scripts/run_sim.sh 里显式调用的 isaac-sim*.sh 说了算。
+ENTRYPOINT []
+
+# ---- (可选) 国内加速：把 apt 源换到清华 ----
+# RUN sed -i 's@//archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g; s@//security.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg lsb-release ca-certificates locales \
+    && locale-gen en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- ROS 2 Humble (jammy) ----
+# 已知妥协（实测得出，不是偷懒）：
+#   * 本网络对 HTTPS 有中间拦截，容器内访问 https://packages.ros.org 直接
+#     certificate verify failed，因此必须走 http
+#   * 官方 ros.key 与 ros.asc 是同一把 AB17C654，已过期，apt 报 EXPKEYSIG，
+#     所以只能 trusted=yes 跳过签名校验
+# 若将来网络允许 HTTPS，可改回：
+#   deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://packages.ros.org/ros2/ubuntu jammy main
+RUN echo "deb [trusted=yes arch=amd64] http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
+        ros-humble-ros-base \
+        ros-humble-xacro \
+        ros-humble-urdf \
+        ros-humble-robot-state-publisher \
+        ros-humble-joint-state-publisher \
+        ros-humble-joint-state-publisher-gui \
+        ros-humble-tf2-tools \
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-rmw-fastrtps-cpp \
+        ros-humble-rosbag2 \
+        ros-humble-image-transport \
+        python3-colcon-common-extensions \
+        build-essential cmake pkg-config \
+        python3-pip \
+        python3-numpy \
+        git vim tmux htop iputils-ping usbutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# rviz2 / rqt 体积大（~1.2G）。磁盘紧张时先不装；需要可视化再取消注释。
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#         ros-humble-rviz2 ros-humble-rqt ros-humble-rqt-common-plugins \
+#     && rm -rf /var/lib/apt/lists/*
+
+# ---- ROS 环境自动 source ----
+# 注意：/root/.bashrc 开头有非交互保护（case $- ... return），
+# 追加到末尾的 source 行在 bash -c / bash -lc 下永远不会执行。
+# 所以必须放 /etc/profile.d（登录 shell 读），且脚本里仍建议显式 source。
+RUN printf '%s\n' \
+    'source /opt/ros/humble/setup.bash' \
+    '[ -f /workspace/bajie_ws/install/setup.bash ] && source /workspace/bajie_ws/install/setup.bash' \
+    'export RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}' \
+    > /etc/profile.d/99-ros-humble.sh \
+    && echo '[ -f /etc/profile.d/99-ros-humble.sh ] && . /etc/profile.d/99-ros-humble.sh' >> /root/.bashrc
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

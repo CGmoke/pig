@@ -1,0 +1,46 @@
+# 仅用于验证 Dockerfile.sim 中「ROS 2 Humble 安装段」的真实可构建性。
+# 不拉 Isaac Sim（7.3 GB 压缩），只验证 apt 源、GPG key、包名是否成立。
+# 验证通过后即可删除本文件与镜像：docker rmi bajie/roscheck:jammy
+FROM ubuntu:22.04
+
+USER root
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg lsb-release ca-certificates locales \
+    && locale-gen en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 关键：走 http 而非 https。本机所在网络对 HTTPS 有中间拦截，
+# 容器内无对应 CA，https://packages.ros.org 会 certificate verify failed。
+# 为什么不校验签名：
+#   1) 本网络对 HTTPS 有中间拦截，容器内 https://packages.ros.org 直接 certificate verify failed
+#   2) 官方 ros.key / ros.asc 是同一把 AB17C654，已过期，apt 报 EXPKEYSIG
+#   所以这里只能走 http + trusted=yes。见 docs/开发环境搭建.md「已知妥协」一节。
+RUN echo "deb [trusted=yes arch=amd64] http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
+        ros-humble-ros-base \
+        ros-humble-xacro \
+        ros-humble-urdf \
+        ros-humble-robot-state-publisher \
+        ros-humble-joint-state-publisher \
+        ros-humble-joint-state-publisher-gui \
+        ros-humble-tf2-tools \
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-rosbag2 \
+        ros-humble-image-transport \
+        python3-colcon-common-extensions \
+        python3-pip \
+        python3-numpy \
+        git vim tmux htop iputils-ping usbutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN printf '%s\n' \
+    'source /opt/ros/humble/setup.bash' \
+    '[ -f /workspace/bajie_ws/install/setup.bash ] && source /workspace/bajie_ws/install/setup.bash' \
+    >> /root/.bashrc
+
+CMD ["/bin/bash"]
