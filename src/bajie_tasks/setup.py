@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import setup
 
 package_name = 'bajie_tasks'
@@ -9,6 +11,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -21,6 +24,7 @@ setup(
         'console_scripts': [
             't1_move = bajie_tasks.t1_move:main',
             'joint_probe = bajie_tasks.joint_probe:main',
+            'q1_drive = bajie_tasks.q1_drive:main',
         ],
     },
 )

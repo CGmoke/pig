@@ -67,23 +67,23 @@ docker run --rm -it --name bajie-rviz \
 
 已知坑：
 
-| 现象 | 原因 / 处理 |
-| --- | --- |
-| UI 正常、3D 区域纯黑 | NVIDIA 的 GL 线程优化与 Ogre GLX 冲突。`Dockerfile.rviz` 已设 `ENV __GL_THREADED_OPTIMIZATIONS=0`，旧镜像需重建、旧容器需重启 |
-| 构建报 `held broken packages` | 基础镜像的 `libbrotli1` 是 sury 的 1.1.0，与 jammy 的 `libbrotli-dev` 冲突；Dockerfile.rviz 已用 `--allow-downgrades` 降回 1.0.9 |
-| `executable 'rviz2' not found` | 用了 `bajie/sim:humble45`，要换 `bajie/sim:humble45-rviz` |
-| 模型纯白/灰 | 官方 mesh 无贴图，正常 |
+| 现象                             | 原因 / 处理                                                                                                                            |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| UI 正常、3D 区域纯黑             | NVIDIA 的 GL 线程优化与 Ogre GLX 冲突。`Dockerfile.rviz` 已设 `ENV __GL_THREADED_OPTIMIZATIONS=0`，旧镜像需重建、旧容器需重启      |
+| 构建报 `held broken packages`  | 基础镜像的 `libbrotli1` 是 sury 的 1.1.0，与 jammy 的 `libbrotli-dev` 冲突；Dockerfile.rviz 已用 `--allow-downgrades` 降回 1.0.9 |
+| `executable 'rviz2' not found` | 用了 `bajie/sim:humble45`，要换 `bajie/sim:humble45-rviz`                                                                          |
+| 模型纯白/灰                      | 官方 mesh 无贴图，正常                                                                                                                 |
 
 ## 环境状态（2026-11-20 实测）
 
-| 项           | 状态                                                                                    |
-| ------------ | --------------------------------------------------------------------------------------- |
-| 驱动         | 580.178.04（**必须 ≤580**，595.x 会让 RTX 渲染器在 `librtx.scenedb` 段错误）   |
-| 镜像         | `bajie/sim:humble45`，含 Humble + rmw_fastrtps_cpp + ROS 2 bridge 预编译库            |
-| GPU 穿透     | ✅ 容器内 `nvidia-smi` 正常                                                           |
-| 官方场景加载 | ✅ `abr_scene.usd` 打开，1 个 Articulation Root / 34 关节 / 4 相机 + 1 Lidar          |
-| 时间轴       | ✅ 脚本 play 生效（仿真时间实测推进 0 → 87s）                                          |
-| ROS 桥接     | ⚠️ **场景内没有 ROS2 图节点**，需自己挂 `machine/component/omni_graphs/*.usd` |
+| 项           | 状态                                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------------------- |
+| 驱动         | 580.178.04（**必须 ≤580**，595.x 会让 RTX 渲染器在 `librtx.scenedb` 段错误）                    |
+| 镜像         | `bajie/sim:humble45`，含 Humble + rmw_fastrtps_cpp + ROS 2 bridge 预编译库                             |
+| GPU 穿透     | ✅ 容器内 `nvidia-smi` 正常                                                                            |
+| 官方场景加载 | ✅ `abr_scene.usd` 打开，1 个 Articulation Root / 34 关节 / 4 相机 + 1 Lidar                           |
+| 时间轴       | ✅ 脚本 play 生效（仿真时间实测推进 0 → 87s）                                                           |
+| ROS 桥接     | ⚠️ **场景内没有 ROS2 图节点**，需自己挂 `machine/component/omni_graphs/*.usd`                  |
 | RViz2        | ✅ `bajie/sim:humble45-rviz`，NVIDIA 渲染黑屏已用 `__GL_THREADED_OPTIMIZATIONS=0` 修复（镜像内固化） |
 
 ## 当前卡点与下一步
@@ -105,11 +105,11 @@ machine/component/omni_graphs/
 
 ### 已实测的结论（2026-11-20）
 
-| 尝试 | 结果 |
-|---|---|
-| 直接 reference 这 8 张图 + 重连 12 条 targetPrim | 挂上了、关系全对，但**一帧数据都不发** |
-| 把图根 `OmniGraph` 改判成 `ActionGraph` | 仍不发 |
-| **用 `og.Controller` 现场搭最小图** | ✅ 成功：25 秒收到 `/clock` 183 条、`/joint_states` 182 条，1:1 实时 |
+| 尝试                                             | 结果                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| 直接 reference 这 8 张图 + 重连 12 条 targetPrim | 挂上了、关系全对，但**一帧数据都不发**                             |
+| 把图根 `OmniGraph` 改判成 `ActionGraph`      | 仍不发                                                                   |
+| **用 `og.Controller` 现场搭最小图**      | ✅ 成功：25 秒收到 `/clock` 183 条、`/joint_states` 182 条，1:1 实时 |
 
 结论：**别挂官方图，自己搭最小桥接图**（`scripts/build_bridge.py`）。
 搭之前必须 `set_extension_enabled_immediate("isaacsim.ros2.bridge", True)`，
