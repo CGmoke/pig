@@ -1,0 +1,16 @@
+已启用 isaacsim.ros2.bridge，等待节点类型注册…
+机器人 root: /World/abr_machine/robot_root/base/base_footprint
+
+=== 建图 ===
+  建图成功
+
+=== 播放并实测 25 秒 ===
+   t= 5.1s playing=True sim=  1.19s clock=  0 js=  0
+   t=10.0s playing=True sim= 11.18s clock= 43 js= 43
+   t=15.0s playing=True sim= 16.18s clock= 91 js= 90
+   t=20.0s playing=True sim= 21.18s clock=135 js=135
+   t=25.0s playing=True sim= 26.16s clock=180 js=179
+
+clock=180 条  joint_states=179 条
+关节名(12)：['wheel_left_joint', 'wheel_right_joint', 'lift_joint', 'pitch_joint', 'joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'arm_finger_joint1', 'arm_finger_joint2']
+✅ 桥接图生效 → 已保存 /workspace/src/bajie_sim/scene/abr_scene_ros.usd
