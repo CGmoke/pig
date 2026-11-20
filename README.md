@@ -28,7 +28,7 @@ bajie_ws/
 ```bash
 # 1) 编译 ROS 包（在容器里跑，宿主不需要装 ROS）
 docker run --rm -v $PWD:/workspace -w /workspace bajie/sim:humble45 \
-  bash -c 'source /opt/ros/humble/setup.bash && colcon build --symlink-install'
+  bash -c 'source /opt/ros/humble/setup.bash && colcon build --base-paths src --symlink-install'
 
 # 2) 展开官方 xacro → generated/bajie_robot.urdf
 docker run --rm -v $PWD:/workspace bajie/sim:humble45 \
@@ -43,6 +43,8 @@ docker run --rm --gpus all --network host \
 ```
 
 ## RViz 可视化（Docker）
+
+题一比赛动作请使用 `ros2 launch bajie_tasks q1_rviz.launch.py`（而不是下方只看模型的官方启动命令）。更新后需重新编译。新版机械臂朝前上方抬展，播放前按官方模型验证整段轨迹的地面和机身净空。最新版 `seed=7` 答案在 [`bajie-demo/answers/`](bajie-demo/answers/q1_demo_output.jsonl)，外层 `answers/` 中的旧结果不要作为本次提交材料。
 
 `Dockerfile.sim` 里 rviz2 默认没装（约 1.2G），可视化用单独的 overlay 镜像：
 

@@ -1,0 +1,28 @@
+Starting >>> bajie_robot
+Finished <<< bajie_robot [0.62s]
+Starting >>> bajie_tasks
+Finished <<< bajie_tasks [0.46s]
+
+Summary: 2 packages finished [1.18s]
+warning: Using load_yaml() directly is deprecated. Use xacro.load_yaml() instead.
+test_body_clearance_is_independent_of_ground (test_q1_clearance.Q1ClearanceTest) ... ok
+test_legacy_seed_7_pose_hits_ground (test_q1_clearance.Q1ClearanceTest) ... ok
+test_safe_endpoints_can_have_an_unsafe_middle (test_q1_clearance.Q1ClearanceTest) ... ok
+test_seeded_stages_and_return_to_zero (test_q1_clearance.Q1ClearanceTest) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 2.472s
+
+OK
+warning: Using load_yaml() directly is deprecated. Use xacro.load_yaml() instead.
+[INFO] [1795160819.376672043] [q1_drive]: 读取 1 个测例：bajie-demo/inputs/q1_demo_input.jsonl
+[INFO] [1795160819.383533635] [q1_drive]: [q1_all_seed7] lift：3.00s，净空下界：地面 0.514 m，机身 0.021 m
+[INFO] [1795160822.410373082] [q1_drive]: [q1_all_seed7] lift 完成，保持 5.0s
+[INFO] [1795160827.423555701] [q1_drive]: [q1_all_seed7] head：3.00s，净空下界：地面 0.698 m，机身 0.044 m
+[INFO] [1795160830.450448560] [q1_drive]: [q1_all_seed7] head 完成，保持 5.0s
+[INFO] [1795160835.461531943] [q1_drive]: [q1_all_seed7] arm：3.00s，净空下界：地面 0.670 m，机身 0.022 m
+[INFO] [1795160838.485950542] [q1_drive]: [q1_all_seed7] arm 完成，保持 5.0s
+[INFO] [1795160843.498760699] [q1_drive]: [q1_all_seed7] gripper_open：3.00s，净空下界：地面 0.679 m，机身 0.035 m
+[INFO] [1795160846.526628658] [q1_drive]: [q1_all_seed7] gripper_close：3.00s，净空下界：地面 0.679 m，机身 0.035 m
+[INFO] [1795160849.554011869] [q1_drive]: [q1_all_seed7] 完成，5 个关键帧
+[INFO] [1795160849.554733442] [q1_drive]: 输出 1 行：/results/q1_humble_output.jsonl

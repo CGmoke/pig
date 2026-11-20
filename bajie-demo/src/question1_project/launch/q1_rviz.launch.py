@@ -11,19 +11,19 @@
 import os
 from pathlib import Path
 
+import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_param_builder import load_xacro
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     robot_share = get_package_share_directory("bajie_robot")
-    # load_xacro 需要 Path，不能传 str
     xacro_path = Path(robot_share) / "urdf" / "bajie_robot.urdf.xacro"
-    robot_description = load_xacro(file_path=xacro_path)
+    robot_description = ParameterValue(xacro.process_file(str(xacro_path)).toxml(), value_type=str)
 
     input_file = LaunchConfiguration("input_file")
     output_file = LaunchConfiguration("output_file")
@@ -45,7 +45,8 @@ def generate_launch_description():
             executable="q1_drive",
             name="q1_drive",
             output="screen",
-            parameters=[{"input_file": input_file, "output_file": output_file}],
+            parameters=[{"input_file": input_file, "output_file": output_file,
+                         "robot_description": robot_description}],
         ),
         Node(
             package="rviz2",

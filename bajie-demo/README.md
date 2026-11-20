@@ -4,7 +4,7 @@
 
 | 题目 | 源码 | 正式输入 | 当前状态 |
 | --- | --- | --- | --- |
-| 题一 · 关节分步驱动 | [`src/question1_project/`](src/question1_project/) | [`q1_demo_input.jsonl`](inputs/q1_demo_input.jsonl) | 已有 ROS 2 节点、RViz 启动配置和[作答](answers/q1_demo_output.jsonl)；待用此目录复跑，补全日志和视频 |
+| 题一 · 关节分步驱动 | [`src/question1_project/`](src/question1_project/) | [`q1_demo_input.jsonl`](inputs/q1_demo_input.jsonl) | 已用 Humble 无界面运行生成[作答](answers/q1_demo_output.jsonl)；待用 RViz 复跑并录制视频 |
 | 题二 · 正向运动学 | [`src/question2_project/`](src/question2_project/) | [`q2_demo_input.jsonl`](inputs/q2_demo_input.jsonl) | 待实现；无正式作答 |
 | 题三 · 仿真触碰 | [`src/question3_project/`](src/question3_project/) | [`q3_demo_input.jsonl`](inputs/q3_demo_input.jsonl) | 已有 ROS 2 桥接探针；待完成三例触碰控制、作答及视频 |
 
@@ -16,7 +16,7 @@
 
 ## 题一：构建并运行
 
-以下命令从**本 README 所在目录**执行。需要已经安装 ROS 2 Humble、`colcon`，以及 `rclpy`、`sensor_msgs`、`xacro`、`launch_param_builder`、`robot_state_publisher`、`rviz2`、`ament_cmake` 等依赖。RViz 需要可用图形桌面。
+以下命令从**本 README 所在目录**执行。需要已经安装 ROS 2 Humble、`colcon`，以及 `rclpy`、`sensor_msgs`、`xacro`、`python3-numpy`、`robot_state_publisher`、`rviz2`、`ament_cmake` 等依赖。RViz 需要可用图形桌面。
 
 ```bash
 export BAJIE_URDF_DIR=/你的模型目录/ecovacs-bajie-urdf
@@ -32,6 +32,14 @@ ros2 launch bajie_tasks q1_rviz.launch.py \
 ```
 
 观察升降 → 头部 → 机械臂 → 夹爪张开 → 夹爪闭合。作答文件应有一行，包含五个按序排列的关键帧及最终状态。动作完成并写出答案后，可关闭 RViz 或结束启动程序。
+
+**轨迹避碰：**机械臂朝前上方抬展，仍由 `seed` 决定目标。程序根据官方 URDF 的可视及碰撞几何构造包围盒，正向计算各连杆位姿，用区间内最大位移给净空作保守估计。每段轨迹（含夹爪开闭、多例之间的回零）需保守满足离 `base_footprint` 下的 `z=0` 地面至少 **5 cm**、离非相连机身至少 **2 cm** 才会播放。机械臂第一节与安装座的固有连接界面不计入；这是题一 RViz 模型的几何验证，不是物理接触仿真。检查不通过时停止，不写该例答案。
+
+验证轨迹停播条件和种子 `0–127`（无需启动 RViz，先构建并加载环境）：
+
+```bash
+python3 -m unittest discover -s src/question1_project/test -v
+```
 
 ## 题二：待实现
 
