@@ -11,7 +11,7 @@ bajie_ws/
 │   ├── bajie_robot/     # 官方 URDF 包（urdf/ meshes/ calib/ launch/ rviz/）
 │   ├── bajie_sim/       # 官方仿真资源（scene/ machine/ models/）+ 本工作区补的 package.xml
 │   └── bajie_tasks/     # 自己的任务包：t1_move / joint_probe
-├── docker/              # Dockerfile.sim（Isaac Sim 4.5 + Humble）、compose.yaml
+├── docker/              # Dockerfile.sim（Isaac Sim 4.5 + Humble）、Dockerfile.rviz、compose.yaml
 ├── scripts/             # 环境体检、启动、URDF 展开、场景体检、桥接探针
 ├── docs/                # 环境搭建与踩坑记录
 ├── logs/                # 每次运行的日志与报告（诊断证据都在这）
@@ -38,6 +38,42 @@ docker run --rm --gpus all --network host \
     /isaac-sim/python.sh /workspace/scripts/run_scene_ros.py --duration 8'
 ```
 
+## RViz 可视化（Docker）
+
+`Dockerfile.sim` 里 rviz2 默认没装（约 1.2G），可视化用单独的 overlay 镜像：
+
+```bash
+# 1) 构建（只需一次，基于本地 bajie/sim:humble45，几秒）
+docker build -f docker/Dockerfile.rviz -t bajie/sim:humble45-rviz docker
+
+# 2) 启动
+xhost +si:localuser:root
+docker run --rm -it --name bajie-rviz \
+  --network host --ipc host --shm-size=2gb \
+  --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all \
+  -e DISPLAY="$DISPLAY" -e QT_X11_NO_MITSHM=1 -e ROS_DOMAIN_ID=42 \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v "${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro" \
+  -e XAUTHORITY=/root/.Xauthority \
+  -v $PWD:/workspace -w /workspace \
+  bajie/sim:humble45-rviz \
+  bash -lc 'source /opt/ros/humble/setup.bash && source /workspace/install/setup.bash && \
+            ros2 launch bajie_robot display_bajie_robot_urdf.launch.py use_sim_time:=false'
+```
+
+- `use_sim_time:=false`：单独看模型时没有 `/clock`，必须关掉，否则 TF 时间戳不对。
+- 镜像 `/etc/profile.d` 里自动 source 的是 `/workspace/bajie_ws/install`，而仓库挂在 `/workspace`，所以要手动 `source /workspace/install/setup.bash`。
+- 要和 Isaac Sim 同图：两边都用 `--network host` 且 `ROS_DOMAIN_ID` 一致（默认 42）。
+
+已知坑：
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| UI 正常、3D 区域纯黑 | NVIDIA 的 GL 线程优化与 Ogre GLX 冲突。`Dockerfile.rviz` 已设 `ENV __GL_THREADED_OPTIMIZATIONS=0`，旧镜像需重建、旧容器需重启 |
+| 构建报 `held broken packages` | 基础镜像的 `libbrotli1` 是 sury 的 1.1.0，与 jammy 的 `libbrotli-dev` 冲突；Dockerfile.rviz 已用 `--allow-downgrades` 降回 1.0.9 |
+| `executable 'rviz2' not found` | 用了 `bajie/sim:humble45`，要换 `bajie/sim:humble45-rviz` |
+| 模型纯白/灰 | 官方 mesh 无贴图，正常 |
+
 ## 环境状态（2026-11-20 实测）
 
 | 项           | 状态                                                                                    |
@@ -48,6 +84,7 @@ docker run --rm --gpus all --network host \
 | 官方场景加载 | ✅ `abr_scene.usd` 打开，1 个 Articulation Root / 34 关节 / 4 相机 + 1 Lidar          |
 | 时间轴       | ✅ 脚本 play 生效（仿真时间实测推进 0 → 87s）                                          |
 | ROS 桥接     | ⚠️ **场景内没有 ROS2 图节点**，需自己挂 `machine/component/omni_graphs/*.usd` |
+| RViz2        | ✅ `bajie/sim:humble45-rviz`，NVIDIA 渲染黑屏已用 `__GL_THREADED_OPTIMIZATIONS=0` 修复（镜像内固化） |
 
 ## 当前卡点与下一步
 
@@ -66,8 +103,36 @@ machine/component/omni_graphs/
 └── ros_cameras_upper.usd    # 头部相机
 ```
 
-下一步：写 `scripts/mount_graphs.py`，在场景里 reference 这些图并另存为 `scene/abr_scene_ros.usd`，
-然后 `joint_probe` 就能收到 `/joint_states`，T1 才具备数据基础。
+### 已实测的结论（2026-11-20）
+
+| 尝试 | 结果 |
+|---|---|
+| 直接 reference 这 8 张图 + 重连 12 条 targetPrim | 挂上了、关系全对，但**一帧数据都不发** |
+| 把图根 `OmniGraph` 改判成 `ActionGraph` | 仍不发 |
+| **用 `og.Controller` 现场搭最小图** | ✅ 成功：25 秒收到 `/clock` 183 条、`/joint_states` 182 条，1:1 实时 |
+
+结论：**别挂官方图，自己搭最小桥接图**（`scripts/build_bridge.py`）。
+搭之前必须 `set_extension_enabled_immediate("isaacsim.ros2.bridge", True)`，
+否则报 `unrecognized type 'isaacsim.ros2.bridge.ROS2Context'`。
+
+### 12 个可控关节（实测 /joint_states）
+
+```
+底盘   wheel_left_joint  wheel_right_joint
+升降   lift_joint
+头部   pitch_joint
+机械臂 joint1 … joint6
+夹爪   arm_finger_joint1  arm_finger_joint2
+```
+
+> 注意：URDF 里轮子是 `fixed`（静态 TF 用），但场景 USD 里是 `PhysicsRevoluteJoint`——
+> 所以底盘在仿真里真能跑，这一点以 USD 为准。
+
+### 已知未闭环
+
+`scripts/serve_sim.py`（仿真常驻 + 外部节点下发）能注入图、能播放，但**话题列表仍为空**；
+而 `build_bridge.py`（开场景+建图+播放+测试同一进程）确定可用。
+T1 的稳定跑法应走**单进程一体化**：一个脚本里完成"开场景 → 建图 → 播放 → 驱动 → 记录"。
 
 ## 提交合规
 

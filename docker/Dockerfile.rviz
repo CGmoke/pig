@@ -1,0 +1,25 @@
+# RViz2 可视化镜像（在 bajie/sim:humble45 基础上补装 rviz2）
+# Dockerfile.sim 里 rviz2 默认被注释掉，这里单独加一层，避免影响仿真镜像
+# 构建：docker build -f docker/Dockerfile.rviz -t bajie/sim:humble45-rviz docker
+FROM bajie/sim:humble45
+
+USER root
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 坑：Isaac Sim 基础镜像里 libbrotli1 是 deb.sury.org 的 1.1.0，
+# 而 Ubuntu jammy 的 libbrotli-dev 锁死 1.0.9，导致 libfreetype6-dev →
+# rviz-ogre-vendor 整条依赖装不上。先把 libbrotli1 降回官方版本再装 rviz2。
+RUN apt-get update && apt-get install -y --no-install-recommends --allow-downgrades \
+        libbrotli1=1.0.9-2ubuntu0.1 \
+        ros-humble-rviz2 \
+        ros-humble-launch-param-builder \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# 关键：NVIDIA 驱动的 GL 线程优化与 Ogre（RViz 渲染后端）在 X11 下冲突，
+# 表现为 UI 正常、3D 视图整块纯黑（0,0,0）。关闭后 NV 渲染管线恢复正常。
+ENV __GL_THREADED_OPTIMIZATIONS=0
+
+CMD ["/bin/bash"]
