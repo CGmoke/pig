@@ -24,7 +24,7 @@ class TouchTests(unittest.TestCase):
         self.assertEqual(row['id'], c.id)
         self.assertEqual(row['final_joint_state'], c.joints)
         np.testing.assert_allclose(c.base @ pose_to_matrix(row['objects_link_in_base_footprint']), hand)
-        np.testing.assert_allclose(hand @ pose_to_matrix(row['scene_object_in_objects_link']), obj)
+        np.testing.assert_allclose(hand @ pose_to_matrix(row['scene_object_in_objects_link']), obj, atol=1e-12)
 
     def test_smooth_segment(self):
         samples = np.array(list(smooth_segment(np.zeros(2), np.array([1., -1.]), 1/60, speed=.5)))

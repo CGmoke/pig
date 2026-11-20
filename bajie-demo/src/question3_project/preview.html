@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>题目三｜实时 3D 仿真</title>
+<style>
+:root{font:16px system-ui,sans-serif;background:#f1f3f6;color:#16263d}
+body{margin:0}main{max-width:1152px;margin:auto;padding:clamp(16px,4vw,48px)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-size:clamp(24px,5vw,40px);margin:0;letter-spacing:-.04em}p{margin:7px 0;color:#4b6078}
+#status{border-radius:100px;background:#dbe8fb;padding:8px 13px;color:#183f70;font-weight:650}
+.scene{position:relative;overflow:hidden;background:#e1e9f2;border:1px solid #b8c8dc;border-radius:17px}
+canvas{width:100%;height:clamp(270px,60vh,580px);display:block;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}canvas:focus-visible{outline:3px solid #2362ad;outline-offset:-4px}
+.overlay{position:absolute;top:16px;left:16px;right:16px;display:flex;align-items:center;justify-content:space-between;gap:10px;pointer-events:none}
+#target{background:#f6f9fd;padding:8px 12px;border-radius:8px;font-weight:650}
+button{pointer-events:auto;background:#f6f9fd;border:1px solid #b8c8dc;color:inherit;border-radius:8px;padding:8px 12px;cursor:pointer}
+#contact{position:absolute;bottom:10px;left:16px;right:16px;color:#253b56;font-size:.9rem;pointer-events:none}
+ul{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin:14px 0}
+li{border-top:2px solid #bdcbdc;padding:9px 0;color:#475c74;font-size:.88rem}li strong{display:block;margin-bottom:3px;color:#15263d;font-size:1rem}
+li[data-hit=true]{border-color:#00846e;color:#006552}small{color:#4b6078}
+</style>
+<main>
+<header><div><h1>题目三 · 实时 3D 仿真</h1><p>Isaac Sim 实时状态 · 简化 3D 视图</p></div><span id="status" role="status">正在启动</span></header>
+<div class="scene"><canvas id="scene" tabindex="0" aria-label="简化 3D 视图，拖动或按方向键旋转"></canvas><div class="overlay"><span id="target">等待仿真数据</span><button id="reset">重置视角</button></div><div id="contact">青色标记为 PhysX 报告的接触点</div></div>
+<ul>
+  <li id="touch_toy_1"><strong>01 魔方</strong><span>等待仿真</span></li>
+  <li id="touch_toy_2"><strong>02 恐龙</strong><span>等待仿真</span></li>
+  <li id="touch_toy_3"><strong>03 软玩具</strong><span>等待仿真</span></li>
+</ul>
+<small>拖动或按方向键旋转。机器人和玩具用简化几何表示，不是 Isaac Sim 原生渲染。</small>
+</main>
+<script>
+'use strict';
+const el=id=>document.getElementById(id), canvas=el('scene'), ctx=canvas.getContext('2d');
+const names={rubik_cube:'魔方',dinosaur:'恐龙',soft_toy:'软玩具'};
+let frame=null, yaw=-.55, tilt=.62, pointer=null, lastUpdate=0;
+function draw(){
+  const w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(devicePixelRatio||1,1.5);
+  if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){
+    canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+  }
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  const origin=frame?.base || [0,0,0], scale=Math.min(w*.46,h*.59), a=Math.cos(yaw), b=Math.sin(yaw);
+  function project(p){
+    const x=p[0]-origin[0]-.24,y=p[1]-origin[1],z=p[2]-origin[2]-.36;
+    return [w*.5+scale*(a*x-b*y),h*.56+scale*(Math.sin(tilt)*(b*x+a*y)-Math.cos(tilt)*z)];
+  }
+  function stroke(points,color,width){ctx.beginPath();points.forEach((p,i)=>{const q=project(p);i?ctx.lineTo(...q):ctx.moveTo(...q)});ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke()}
+  function dot(p,r,color){ctx.beginPath();ctx.arc(...project(p),r,0,2*Math.PI);ctx.fillStyle=color;ctx.fill()}
+  const [x,y,z]=origin;
+  for(let i=-8;i<=8;i++){
+    const k=i/8;
+    stroke([[x+k,y-1,z],[x+k,y+1,z]],i?'#c1cfe0':'#8da8c7',1);
+    stroke([[x-1,y+k,z],[x+1,y+k,z]],i?'#c1cfe0':'#8da8c7',1);
+  }
+  if(!frame)return;
+  function box(cx,cy,cz,hx,hy,height,colors){
+    const p=[[-hx,-hy],[hx,-hy],[hx,hy],[-hx,hy]].map(([u,v])=>[cx+u,cy+v,cz]);
+    const t=p.map(([u,v,s])=>[u,v,s+height]);
+    const depth=q=> b*(q[0]-x)+a*(q[1]-y);
+    const edges=p.map((_,i)=>i).sort((i,j)=>depth(p[i])+depth(p[(i+1)%4])-depth(p[j])-depth(p[(j+1)%4]));
+    function face(points,color){ctx.beginPath();points.forEach((q,i)=>{const n=project(q);i?ctx.lineTo(...n):ctx.moveTo(...n)});ctx.closePath();ctx.fillStyle=color;ctx.fill()}
+    edges.forEach(i=>{const j=(i+1)%4;face([p[i],p[j],t[j],t[i]],colors[1+i%2])});face(t,colors[0]);
+  }
+  box(x,y,z,.25,.20,.115,['#7793af','#405d7a','#55718d']);
+  const segments=[frame.arm,...frame.fingers.map(f=>[frame.arm.at(-1),f])];
+  stroke([[x,y,z+.09],frame.arm[0]],'#405d7a',Math.max(12,scale*.062));
+  segments.forEach(s=>stroke(s,'#304966',Math.max(4,scale*.046)));
+  segments.forEach(s=>stroke(s,'#f0f6fc',Math.max(2,scale*.029)));
+  frame.arm.forEach(p=>dot(p,Math.max(3,scale*.022),'#4e7eaa'));
+  frame.fingers.forEach((p,i)=>dot(p,4,i?'#23466d':'#608ab0'));
+  const [tx,ty,tz]=frame.target;
+  if(frame.toy==='rubik_cube')box(tx,ty,tz-.021,.028,.028,.055,['#ffc45f','#b06a24','#d79231']);
+  else if(frame.toy==='dinosaur'){
+    stroke([[tx-.041,ty,tz+.03],[tx+.018,ty,tz+.045],[tx+.054,ty,tz+.085]],'#c18523',scale*.028+3);
+    dot([tx+.05,ty,tz+.085],scale*.018+2,'#e4a844');
+  }else{dot([tx,ty,tz+.032],scale*.037+3,'#bd6384')}
+  if(frame.contact){dot(frame.contact.point,11,'#d0fff5');dot(frame.contact.point,6,'#00846e')}
+}
+function updateStatus(text){if(el('status').textContent!==text)el('status').textContent=text}
+async function poll(){
+  let done=false;
+  try{
+    const response=await fetch('/state');if(!response.ok)throw Error();
+    const state=await response.json();
+    if(state.frame && state.frame.sequence!==frame?.sequence){
+      frame=state.frame;lastUpdate=performance.now();draw();
+      el('target').textContent=`当前测例：${names[frame.toy]}`;
+      el('contact').textContent=frame.contact?`${frame.contact.finger==='left'?'左指':'右指'}已接触${names[frame.toy]}（PhysX 确认）`:'青色标记为 PhysX 报告的接触点';
+      document.querySelectorAll('li').forEach(li=>{
+        const hit=frame.hits[li.id];li.dataset.hit=Boolean(hit);
+        li.lastElementChild.textContent=hit?`${hit.finger==='left'?'左指':'右指'} · 已验证接触`:li.id===frame.id?'仿真中':'等待仿真';
+      });
+    }
+    done=state.exit!==null;
+    if(done)updateStatus(state.exit===0?'仿真已结束 · 保留末帧':'仿真已停止');
+    else updateStatus(!frame?'正在加载仿真':performance.now()-lastUpdate>2500?'等待下一帧':'实时运行');
+  }catch{updateStatus('连接中断 · 等待恢复')}
+  if(!done)setTimeout(poll,frame?85:300);
+}
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointer=[e.clientX,e.clientY]});
+canvas.addEventListener('pointermove',e=>{if(pointer){yaw+=(e.clientX-pointer[0])*.012;tilt=Math.max(.18,Math.min(1.37,tilt+(e.clientY-pointer[1])*.008));pointer=[e.clientX,e.clientY];draw()}});
+canvas.addEventListener('lostpointercapture',()=>{pointer=null});
+canvas.addEventListener('keydown',e=>{
+  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;
+  e.preventDefault();yaw+=e.key==='ArrowLeft'?-.1:e.key==='ArrowRight'?.1:0;
+  tilt=Math.max(.18,Math.min(1.37,tilt+(e.key==='ArrowDown'?.07:e.key==='ArrowUp'?-.07:0)));draw();
+});
+el('reset').onclick=()=>{yaw=-.55;tilt=.62;draw()};
+new ResizeObserver(draw).observe(canvas);draw();poll();
+</script>
+</html>
