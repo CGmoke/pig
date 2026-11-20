@@ -12,6 +12,9 @@ generated/
 # expand_urdf.sh 构造的最小 ament 前缀
 .prefix/
 
+# Gazebo 模型资源（体积过大，不入库，本地保留）
+src/bajie_sim/models/
+
 # Omniverse / Isaac Sim 缓存与数据
 .ov-cache/
 .ov-data/
