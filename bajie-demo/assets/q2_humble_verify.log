@@ -1,0 +1,67 @@
+ROS_DISTRO=humble
+Python 3.10.12
+NumPy 1.21.5
+6dc26b06aafb82aa7030eabf54e5c181b17b4173eb8fc5e64103fbcbdb0d8f49  /work/src/bajie_robot/urdf/bajie_robot.urdf.xacro
+Starting >>> bajie_robot
+Finished <<< bajie_robot [0.56s]
+
+Summary: 1 package finished [0.66s]
+warning: Using load_yaml() directly is deprecated. Use xacro.load_yaml() instead.
+8f065034f12bc696aad1e7a83deb6093a053265da020d17dc71669c2d395542a  /tmp/bajie_robot.urdf
+test_cli_preserves_order_and_ignores_blank_lines (test_q2.QuestionTwoTest) ... ok
+test_lift_adds_only_base_z_and_head_fingers_are_other_branches (test_q2.QuestionTwoTest) ... ok
+test_missing_joint_and_non_finite_pose_are_rejected (test_q2.QuestionTwoTest) ... ok
+test_official_zero_case (test_q2.QuestionTwoTest) ... ok
+test_pose_handles_gimbal_lock_and_xyzw_convention (test_q2.QuestionTwoTest) ... ok
+test_rotated_object_reconstructs_in_base_for_bent_arm (test_q2.QuestionTwoTest) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.175s
+
+OK
+URDF: /tmp/bajie_robot.urdf
+关节链: base_joint → lift_base_joint → lift_joint → arm_base_joint → joint1 → joint2 → joint3 → joint4 → joint5 → joint6 → gripper_joint → object_joint
+输入: inputs/q2_demo_input.jsonl
+{"id":"demo_zero","objects_link_in_base_footprint":{"xyz":[1.1037154474508848,-0.06268503722746682,0.6291361337630494],"rpy":[-6.512717948648483e-13,0.000831999976467165,-3.6513229045394555e-08],"quat_xyzw":[7.269115338318447e-12,0.00041599997623503423,-1.8256612807524523e-08,0.999999913472006]},"scene_object_in_objects_link":{"xyz":[-0.6034413813060193,-0.4373149848159186,-0.32963831101221885],"rpy":[-2.972774080455438e-11,-0.0008319999764671644,3.651324114120606e-08],"quat_xyzw":[-7.269115392633406e-12,-0.00041599997623503423,1.8256612807524546e-08,0.999999913472006]}}
+已计算 1 条测例；作答已写入 /results/q2_demo_output.jsonl
+[WARN] [1795164173.523637255] [kdl_parser]: The root link base_footprint has an inertia specified in the URDF, but KDL does not support a root link with an inertia.  As a workaround, you can add an extra dummy link to your URDF.
+[INFO] [1795164173.523735946] [q2_rsp]: got segment arm1_link
+[INFO] [1795164173.523767749] [q2_rsp]: got segment arm2_link
+[INFO] [1795164173.523771588] [q2_rsp]: got segment arm3_link
+[INFO] [1795164173.523774030] [q2_rsp]: got segment arm4_link
+[INFO] [1795164173.523776372] [q2_rsp]: got segment arm5_link
+[INFO] [1795164173.523778518] [q2_rsp]: got segment arm6_link
+[INFO] [1795164173.523781149] [q2_rsp]: got segment arm_base_link
+[INFO] [1795164173.523783526] [q2_rsp]: got segment base_footprint
+[INFO] [1795164173.523786096] [q2_rsp]: got segment base_link
+[INFO] [1795164173.523788672] [q2_rsp]: got segment base_scan
+[INFO] [1795164173.523790973] [q2_rsp]: got segment berxel_arm_base_link
+[INFO] [1795164173.523793703] [q2_rsp]: got segment berxel_upper_base_link
+[INFO] [1795164173.523796397] [q2_rsp]: got segment caster_back_link
+[INFO] [1795164173.523798997] [q2_rsp]: got segment caster_back_link2
+[INFO] [1795164173.523801194] [q2_rsp]: got segment caster_left_link
+[INFO] [1795164173.523803700] [q2_rsp]: got segment caster_left_link2
+[INFO] [1795164173.523806243] [q2_rsp]: got segment caster_right_link
+[INFO] [1795164173.523808431] [q2_rsp]: got segment caster_right_link2
+[INFO] [1795164173.523810941] [q2_rsp]: got segment gripper_left_link
+[INFO] [1795164173.523813147] [q2_rsp]: got segment gripper_link
+[INFO] [1795164173.523815784] [q2_rsp]: got segment gripper_right_link
+[INFO] [1795164173.523818300] [q2_rsp]: got segment head_pitch_link
+[INFO] [1795164173.523820512] [q2_rsp]: got segment head_wide_angle_link
+[INFO] [1795164173.523823090] [q2_rsp]: got segment infrared_link
+[INFO] [1795164173.523825306] [q2_rsp]: got segment lift_base_link
+[INFO] [1795164173.523827475] [q2_rsp]: got segment lift_link
+[INFO] [1795164173.523829595] [q2_rsp]: got segment line_laser_down_link
+[INFO] [1795164173.523831888] [q2_rsp]: got segment objects_link
+[INFO] [1795164173.523834369] [q2_rsp]: got segment royale_camera_optical_frame
+[INFO] [1795164173.523837061] [q2_rsp]: got segment tof_top_link
+[INFO] [1795164173.523839590] [q2_rsp]: got segment wheel_left_link
+[INFO] [1795164173.523841754] [q2_rsp]: got segment wheel_right_link
+demo_zero objects_link_in_base_footprint: 位置误差 6.663e-16 m，旋转误差 7.834e-16 rad
+demo_zero scene_object_in_objects_link: 位置误差 1.570e-16 m，旋转误差 7.835e-16 rad
+demo_zero_lift_0p1m objects_link_in_base_footprint: 位置误差 5.553e-16 m，旋转误差 7.834e-16 rad
+demo_zero_lift_0p1m scene_object_in_objects_link: 位置误差 1.110e-16 m，旋转误差 7.835e-16 rad
+demo_zero_bent_arm_rotated_object objects_link_in_base_footprint: 位置误差 5.088e-16 m，旋转误差 4.917e-16 rad
+demo_zero_bent_arm_rotated_object scene_object_in_objects_link: 位置误差 2.544e-16 m，旋转误差 4.690e-16 rad
+通过：3 个测例，每例两组位姿；阈值 1e-08 m / 1e-07 rad
+[INFO] [1795164173.851094105] [rclcpp]: signal_handler(SIGINT/SIGTERM)

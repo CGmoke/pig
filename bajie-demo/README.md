@@ -5,7 +5,7 @@
 | 题目 | 源码 | 正式输入 | 当前状态 |
 | --- | --- | --- | --- |
 | 题一 · 关节分步驱动 | [`src/question1_project/`](src/question1_project/) | [`q1_demo_input.jsonl`](inputs/q1_demo_input.jsonl) | 已用 Humble 无界面运行生成[作答](answers/q1_demo_output.jsonl)；待用 RViz 复跑并录制视频 |
-| 题二 · 正向运动学 | [`src/question2_project/`](src/question2_project/) | [`q2_demo_input.jsonl`](inputs/q2_demo_input.jsonl) | 待实现；无正式作答 |
+| 题二 · 正向运动学 | [`src/question2_project/`](src/question2_project/) | [`q2_demo_input.jsonl`](inputs/q2_demo_input.jsonl) | 已生成[作答](answers/q2_demo_output.jsonl)；8 项自动测试及 Humble TF 三组交叉复核通过 |
 | 题三 · 仿真触碰 | [`src/question3_project/`](src/question3_project/) | [`q3_demo_input.jsonl`](inputs/q3_demo_input.jsonl) | 已有 ROS 2 桥接探针；待完成三例触碰控制、作答及视频 |
 
 ## 环境与官方资源
@@ -41,9 +41,17 @@ ros2 launch bajie_tasks q1_rviz.launch.py \
 python3 -m unittest discover -s src/question1_project/test -v
 ```
 
-## 题二：待实现
+## 题二：正向运动学与坐标变换
 
-输入为 `inputs/q2_demo_input.jsonl`，正式输出为 `answers/q2_demo_output.jsonl`。目前仅保留[开发说明](src/question2_project/README.md)，没有可执行入口。
+从**本 README 所在目录**执行。先按[题二说明](src/question2_project/README.md)在 Humble 下把官方 Xacro 展开为 URDF，并将 `BAJIE_URDF` 设为展开后文件的绝对路径。有展开文件时，求解只需要 Python 3.10+ 和 NumPy；不需要启动 RViz、Isaac Sim 或 ROS 节点。
+
+```bash
+set -o pipefail
+python3 src/question2_project/solve_q2.py --urdf "$BAJIE_URDF" \
+  --input inputs/q2_demo_input.jsonl --output answers/q2_demo_output.jsonl 2>&1 | tee assets/q2_run.log
+```
+
+程序从官方 URDF 提取底盘到夹爪的关节链，不硬编码题面答案。独立计算出的夹爪位姿和物体相对夹爪的位姿，均由 Humble TF2 复核；见[复核日志](assets/q2_humble_verify.log)。[题二说明](src/question2_project/README.md)提供测试命令和“只升降 0.1 m”的手算练习。
 
 ## 题三：桥接诊断（不是触碰作答）
 
