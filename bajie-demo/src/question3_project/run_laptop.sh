@@ -22,10 +22,38 @@ fi
 if [[ ${Q3_PREVIEW:-0} == 1 ]]; then
     args+=(--preview /result/frame.json)
 fi
-cid=$(docker create --name "$name" --gpus all --network none --memory 8g --memory-swap 8g --cpus 4 --pids-limit 768 \
+extra=()
+if [[ ${Q3_GUI:-0} == 1 ]]; then
+    [[ -n ${DISPLAY:-} ]] || { echo '未启动：Q3_GUI=1 需要图形桌面，但 DISPLAY 为空。' >&2; exit 1; }
+    xauth=
+    for cand in "${XAUTHORITY:-}" "$HOME/.Xauthority" \
+                "/run/user/$(id -u)/gdm/Xauthority" /run/user/"$(id -u)"/.mutter-Xwaylandauth.*; do
+        [[ -n $cand && -f $cand ]] && { xauth=$cand; break; }
+    done
+    # 容器内是非 root 用户，镜像里的 /isaac-sim/kit 不可写；渲染器需要可写的
+    # 着色器/数据缓存。缓存必须持久化：首次编译 RTX 着色器需要数分钟，
+    # 放到 tmpfs 会让每次运行都重编一遍。
+    cache=${Q3_CACHE_DIR:-$HOME/.cache/bajie-q3-kit}
+    mkdir -p "$cache/kit-cache" "$cache/kit-data"
+    extra+=(-e "DISPLAY=$DISPLAY" -e QT_X11_NO_MITSHM=1 -v /tmp/.X11-unix:/tmp/.X11-unix:rw
+            -v "$cache/kit-cache:/isaac-sim/kit/cache"
+            -v "$cache/kit-data:/isaac-sim/kit/data")
+    if [[ -n $xauth ]]; then
+        extra+=(-v "$xauth:/tmp/.Xauthority:ro" -e XAUTHORITY=/tmp/.Xauthority)
+    else
+        command -v xhost >/dev/null && xhost +si:localuser:"$(id -un)" >/dev/null 2>&1 || true
+        echo '[q3-gui] 未找到 Xauthority，已尝试 xhost 授权' >&2
+    fi
+    args+=(--gui)
+fi
+# 无界面时隔离网络即可；GUI 的完整 experience 启动时会访问本地服务，
+# 用 host 网络避免卡在网络初始化，同时给渲染留出更多内存。
+net=none; mem=8g
+if [[ ${Q3_GUI:-0} == 1 ]]; then net=host; mem=12g; fi
+cid=$(docker create --name "$name" --gpus all --network "$net" --memory "$mem" --memory-swap "$mem" --cpus 4 --pids-limit 768 \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e ROS_LOCALHOST_ONLY=1 -e ROS_DOMAIN_ID=53 \
     -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e NVIDIA_DRIVER_CAPABILITIES=all -e OMP_NUM_THREADS=2 \
-    -e OPENBLAS_NUM_THREADS=1 -e PYTHONDONTWRITEBYTECODE=1 \
+    -e OPENBLAS_NUM_THREADS=1 -e PYTHONDONTWRITEBYTECODE=1 "${extra[@]}" \
     --mount "type=bind,src=$project,dst=/project,readonly" \
     --mount "type=bind,src=$scene,dst=/scene,readonly" \
     --mount "type=bind,src=$urdf,dst=/model.urdf,readonly" \
@@ -42,6 +70,7 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
+limit=360; [[ ${Q3_GUI:-0} == 1 ]] && limit=900
 (
     start=$SECONDS; low=0
     while sleep 2; do
@@ -52,7 +81,7 @@ trap 'exit 130' INT TERM HUP
         [[ $gpu =~ ^[0-9]+$ ]] || gpu=0
         if [[ $avail -lt 4500 || $gpu -lt 500 ]]; then ((low+=1)); else low=0; fi
         printf '[watchdog] host_available=%s MiB gpu_free=%s MiB\n' "$avail" "$gpu"
-        if [[ $low -ge 2 || $((SECONDS-start)) -ge 360 ]]; then
+        if [[ $low -ge 2 || $((SECONDS-start)) -ge $limit ]]; then
             echo '[watchdog] 内存、显存或运行时间达到停止线，正在终止仿真。'
             docker stop -t 2 "$cid" >/dev/null || true
             break

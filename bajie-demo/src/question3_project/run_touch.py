@@ -25,7 +25,33 @@ def log(message):
     print(f'[q3] {message}', flush=True)
 
 
-def run_case(app, case, scene, planner, preview=None):
+def focus_viewport(stage, base):
+    """Point the session camera at the robot when running with a window.
+
+    Writes the camera transform directly instead of using the viewport command
+    stack, which fails on stages whose up-axis differs from the Kit default.
+    """
+    try:
+        from pxr import Gf, Usd, UsdGeom
+        cam = stage.GetPrimAtPath('/OmniverseKit_Persp')
+        if not cam:
+            log('viewport camera setup skipped: /OmniverseKit_Persp not found')
+            return
+        center = base[:3, 3]
+        eye = center + np.array([-2.2, -2.2, 1.6])
+        target = center + np.array([0., 0., .5])
+        view = Gf.Matrix4d().SetLookAt(
+            Gf.Vec3d(*eye.tolist()), Gf.Vec3d(*target.tolist()), Gf.Vec3d(0, 0, 1))
+        xform = UsdGeom.Xformable(cam)
+        with Usd.EditContext(stage, stage.GetSessionLayer()):
+            xform.ClearXformOpOrder()
+            xform.MakeMatrixXform().Set(view.GetInverse())
+        log(f'viewport focused at {np.round(center, 2).tolist()}')
+    except Exception as exc:
+        log(f'viewport camera setup skipped: {exc}')
+
+
+def run_case(app, case, scene, planner, preview=None, gui=False):
     import carb
     import omni.graph.core as og
     import omni.timeline
@@ -111,6 +137,9 @@ def run_case(app, case, scene, planner, preview=None):
     anchor.CreateLocalPos0Attr().Set(Gf.Vec3f(*case.base[:3, 3]))
     quat = Gf.Matrix4d(case.base.T.tolist()).ExtractRotationQuat()
     anchor.CreateLocalRot0Attr().Set(Gf.Quatf(quat.GetReal(), Gf.Vec3f(*quat.GetImaginary())))
+    if gui:
+        app.update()
+        focus_viewport(stage, world(BASE))
     for path in (toy, *FINGERS):
         PhysxSchema.PhysxContactReportAPI.Apply(stage.GetPrimAtPath(path)).CreateThresholdAttr().Set(0.)
     # Match a specific toy and a specific fingertip at the same physics step.
@@ -137,7 +166,8 @@ def run_case(app, case, scene, planner, preview=None):
     tl.play()
     try:
         log(f'{case.id}: initializing PhysX and ROS bridge')
-        for _ in range(4):
+        # GUI 的窗口与渲染是异步初始化的，多走几帧再取 physics view。
+        for _ in range(30 if gui else 4):
             app.update()
         log(f"{case.id}: physics warm start complete")
         a.initialize()
@@ -225,6 +255,7 @@ def main():
     group.add_argument('--output', type=Path, help='Write all three verified rows atomically')
     group.add_argument('--case', choices=list(TOYS), help='Verify one toy; never write the final answer')
     p.add_argument('--preview', type=Path, help='Sample live scene transforms into a local JSON feed')
+    p.add_argument('--gui', action='store_true', help='Open an Isaac Sim window and render the scene')
     args = p.parse_args()
     preview = Feed(args.preview) if args.preview else None
     cases = load_cases(args.input)
@@ -233,19 +264,40 @@ def main():
     if not args.scene.is_file():
         p.error('scene file not found')
     import scipy.optimize  # Load before starting Kit, to surface missing dependencies early.
-    from isaacsim import AppFramework
-    kit = str(Path(__file__).with_name('physics.kit').resolve())
     isaac = Path(os.environ.get('ISAAC_PATH', '/isaac-sim'))
-    argv = [kit, '--no-window', '--portable']
+    log(f"starting minimal Isaac Sim 4.5 (CPU PhysX, ROS 2, {'GUI' if args.gui else 'no viewport'})")
+    from isaacsim import AppFramework
+    kit = ((isaac / 'apps' / 'isaacsim.exp.base.kit') if args.gui
+           else Path(__file__).with_name('physics.kit').resolve())
+    argv = [str(kit), '--portable']
+    if args.gui:
+        # GPU 显存与容器内存都有限，降低渲染分辨率以容纳三例连续运行。
+        argv += ['--/app/renderer/resolution/width=960',
+                 '--/app/renderer/resolution/height=540']
+    else:
+        argv.insert(1, '--no-window')
     for folder in ('exts', 'extscache', 'extsPhysics', 'extsDeprecated'):
         argv.extend(('--ext-folder', str(isaac / folder)))
-    log('starting minimal Isaac Sim 4.5 (CPU PhysX, ROS 2, no viewport)')
     app = AppFramework('bajie-q3', argv)
     try:
+        if args.gui:
+            import omni.kit.app
+            omni.kit.app.get_app().get_extension_manager().set_extension_enabled_immediate(
+                'isaacsim.ros2.bridge', True)
+            from omni.kit.viewport.window import ViewportWindow, get_viewport_window_instances
+            windows = list(get_viewport_window_instances())
+            if not windows:
+                windows = [ViewportWindow('Viewport', width=1280, height=720)]
+            for win in windows:
+                win.visible = True
+            for _ in range(5):
+                app.update()
+            log(f'viewport windows ready: {len(windows)}')
         import rclpy
         rclpy.init(args=[])
         try:
-            rows = [run_case(app, c, args.scene.resolve(), planner, preview) for c, planner in zip(selected, planners)]
+            rows = [run_case(app, c, args.scene.resolve(), planner, preview, args.gui)
+                    for c, planner in zip(selected, planners)]
         finally:
             rclpy.shutdown()
         if args.output:
