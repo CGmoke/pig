@@ -39,6 +39,9 @@ services:
       # shader/扩展缓存：首次编译约 4 分钟，持久化后冷启动快很多
       - ../.ov-cache:/root/.cache/ov
       - ../.ov-data:/root/.local/share/ov
+      # --rm 容器会丢弃可写层，RTX PSO/驱动着色器缓存也需落到宿主机
+      - ../.kit-cache:/isaac-sim/kit/cache
+      - ../.kit-data:/isaac-sim/kit/data
       - isaac-logs:/root/.nvidia-omniverse/logs
 
     deploy:

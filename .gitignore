@@ -18,6 +18,8 @@ src/bajie_sim/models/
 # Omniverse / Isaac Sim 缓存与数据
 .ov-cache/
 .ov-data/
+.kit-cache/
+.kit-data/
 
 # Python 缓存
 __pycache__/
