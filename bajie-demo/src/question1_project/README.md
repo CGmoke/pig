@@ -6,13 +6,13 @@
 
 ## 目录结构
 
-| 路径 | 作用 |
-| --- | --- |
-| [`bajie_tasks/q1_drive.py`](bajie_tasks/q1_drive.py) | 主节点：读取 JSONL 测例、采样目标位姿、分阶段插值发布、写作答 |
-| [`bajie_tasks/q1_safety.py`](bajie_tasks/q1_safety.py) | `ClearanceModel`：解析 URDF 的 visual/collision 几何，做整段轨迹的保守净空证明 |
-| [`launch/q1_rviz.launch.py`](launch/q1_rviz.launch.py) | 一体化启动 `robot_state_publisher` + `q1_drive` + `rviz2` |
-| [`test/test_q1_clearance.py`](test/test_q1_clearance.py) | 预检回归测试：旧 seed 7 触地、机身间距、区间中间危险、0–127 种子全阶段 |
-| [`package.xml`](package.xml) / [`setup.py`](setup.py) | 包元数据与入口点 `q1_drive = bajie_tasks.q1_drive:main` |
+| 路径                                                      | 作用                                                                             |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [`bajie_tasks/q1_drive.py`](bajie_tasks/q1_drive.py)     | 主节点：读取 JSONL 测例、采样目标位姿、分阶段插值发布、写作答                    |
+| [`bajie_tasks/q1_safety.py`](bajie_tasks/q1_safety.py)   | `ClearanceModel`：解析 URDF 的 visual/collision 几何，做整段轨迹的保守净空证明 |
+| [`launch/q1_rviz.launch.py`](launch/q1_rviz.launch.py)   | 一体化启动 `robot_state_publisher` + `q1_drive` + `rviz2`                  |
+| [`test/test_q1_clearance.py`](test/test_q1_clearance.py) | 预检回归测试：旧 seed 7 触地、机身间距、区间中间危险、0–127 种子全阶段          |
+| [`package.xml`](package.xml) / [`setup.py`](setup.py)   | 包元数据与入口点 `q1_drive = bajie_tasks.q1_drive:main`                        |
 
 ## 环境与依赖
 
@@ -44,15 +44,15 @@ ros2 launch bajie_tasks q1_rviz.launch.py \
 
 ### 节点、参数与话题
 
-| 名称 | 类型 | 说明 |
-| --- | --- | --- |
-| `q1_drive`（节点） | — | 唯一发布 `/joint_states` 的节点 |
-| `input_file` | 参数（string） | 默认 `inputs/q1_demo_input.jsonl`；相对路径基于启动目录 |
-| `output_file` | 参数（string） | 默认 `answers/q1_demo_output.jsonl` |
-| `publish_hz` | 参数（double） | 默认 `30.0`，即插值与保持时的发布频率 |
-| `robot_description` | 参数（string） | 留空时节点自行用 xacro 展开官方模型；launch 会显式传入 |
-| `/joint_states` | 话题（`sensor_msgs/JointState`） | 本节点发布，默认 QoS：RELIABLE / VOLATILE / KEEP_LAST 10 |
-| `/tf`、`/tf_static` | 话题 | 由 `robot_state_publisher` 依据 `/joint_states` 与固定关节发布 |
+| 名称                    | 类型                               | 说明                                                               |
+| ----------------------- | ---------------------------------- | ------------------------------------------------------------------ |
+| `q1_drive`（节点）    | —                                 | 唯一发布 `/joint_states` 的节点                                  |
+| `input_file`          | 参数（string）                     | 默认 `inputs/q1_demo_input.jsonl`；相对路径基于启动目录          |
+| `output_file`         | 参数（string）                     | 默认 `answers/q1_demo_output.jsonl`                              |
+| `publish_hz`          | 参数（double）                     | 默认 `30.0`，即插值与保持时的发布频率                            |
+| `robot_description`   | 参数（string）                     | 留空时节点自行用 xacro 展开官方模型；launch 会显式传入             |
+| `/joint_states`       | 话题（`sensor_msgs/JointState`） | 本节点发布，默认 QoS：RELIABLE / VOLATILE / KEEP_LAST 10           |
+| `/tf`、`/tf_static` | 话题                               | 由 `robot_state_publisher` 依据 `/joint_states` 与固定关节发布 |
 
 `q1_drive` 不调用 `create_rate()`，而是用 `time.sleep(1/publish_hz)` 控制节拍，避免未 `spin` 时定时器阻塞。launch 中**不启动** `joint_state_publisher_gui`，否则两个节点会同时发布 `/joint_states`，RViz 中模型会抖动。
 
@@ -107,14 +107,14 @@ ros2 run tf2_tools view_frames             # 检查关节树无断链
 
 ## 常见问题
 
-| 现象 | 原因与处理 |
-| --- | --- |
-| `Package 'bajie_robot' not found` | 未构建或未 `source install/setup.bash`；确认 `BAJIE_URDF_DIR` 指向含 `package.xml` 与 `urdf/` 的官方包 |
-| RViz 中模型不动或抖动 | 同时存在 `joint_state_publisher_gui`；关闭它，只保留 `q1_drive` |
-| 启动即报 xacro/解析错误 | 官方模型路径不正确，或 `bajie_robot` 安装目录缺少 `urdf/`、`rviz/display.rviz` |
-| `UnsafeMotion: ... 净空不足` | 该 seed 的目标姿态不可用；换 seed，或检查是否误改了 URDF 的 `origin`/几何 |
-| 写作答时报 `EACCES: permission denied` | `answers/` 目录属主为 root；把它改回当前用户，见根目录说明 |
-| 找不到 `inputs/...jsonl` | 参数用了相对路径，而启动目录不是 `bajie-demo/`；改用绝对路径 |
+| 现象                                     | 原因与处理                                                                                                     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Package 'bajie_robot' not found`      | 未构建或未 `source install/setup.bash`；确认 `BAJIE_URDF_DIR` 指向含 `package.xml` 与 `urdf/` 的官方包 |
+| RViz 中模型不动或抖动                    | 同时存在 `joint_state_publisher_gui`；关闭它，只保留 `q1_drive`                                            |
+| 启动即报 xacro/解析错误                  | 官方模型路径不正确，或 `bajie_robot` 安装目录缺少 `urdf/`、`rviz/display.rviz`                           |
+| `UnsafeMotion: ... 净空不足`           | 该 seed 的目标姿态不可用；换 seed，或检查是否误改了 URDF 的 `origin`/几何                                    |
+| 写作答时报 `EACCES: permission denied` | `answers/` 目录属主为 root；把它改回当前用户，见根目录说明                                                   |
+| 找不到 `inputs/...jsonl`               | 参数用了相对路径，而启动目录不是 `bajie-demo/`；改用绝对路径                                                 |
 
 ## 注意事项
 
