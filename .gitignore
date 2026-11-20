@@ -34,5 +34,5 @@ __pycache__/
 *~
 .DS_Store
 
-/docs/
-/scripts/
+# 删除拦截工具误建在工作区根的回收站（应始终为空）
+.Trash-*/

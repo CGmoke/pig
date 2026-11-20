@@ -21,18 +21,28 @@ ROS 2 Humble + Isaac Sim 4.5 的参赛工作区。官方要求的组合（Ubuntu
 
 ```text
 bajie_ws/
-├── src/
-│   ├── bajie_robot/     # 官方 URDF 包（urdf/ meshes/ calib/ launch/ rviz/）
-│   ├── bajie_sim/       # 官方仿真资源（scene/ machine/ models/）+ package.xml
-│   └── bajie_tasks/     # 自己的任务包：q1_drive / joint_probe / t1_move
-├── docker/              # Dockerfile.sim、Dockerfile.rviz、compose.yaml
-├── scripts/             # 环境体检、启动、URDF 展开、场景体检、桥接探针
-├── docs/                # 环境搭建与踩坑记录（细节以 docs/开发环境搭建.md 为准）
-├── inputs/ answers/     # 题一输入与作答
-├── logs/                # 每次运行的日志与报告（诊断证据都在这）
-├── generated/           # xacro 展开产物 bajie_robot.urdf
-└── .ov-cache/ .ov-data/ # Isaac Sim 着色器/扩展缓存（挂进容器，冷启动从 4 分钟降到几十秒）
+├── src/                        # ROS 2 源码，colcon 编译入口
+│   ├── bajie_robot/            # 官方 URDF 包（urdf/ meshes/ calib/ launch/ rviz/）
+│   ├── bajie_sim/              # 官方仿真资源（scene/ machine/ models/）+ package.xml
+│   └── bajie_tasks/            # 自己的任务包：q1_drive / joint_probe / t1_move
+├── bajie-demo/                 # 初赛提交目录，结构自洽（见 bajie-demo/README.md）
+├── docker/                     # Dockerfile.sim / .rviz / .roscheck、compose.yaml
+├── scripts/                    # 环境体检、启动、URDF 展开、场景体检、桥接探针
+├── docs/                       # 环境搭建、赛题与评估记录
+│   └── design/                 # 各题设计稿与实施计划
+├── inputs/ answers/            # 题一工作副本：输入与作答（README 命令的固定路径）
+├── logs/                       # 运行诊断日志与报告
+│   └── kit/                    # Isaac Sim Kit 原始输出
+├── build/ install/ log/        # colcon 编译输出，可由 colcon build 重建，不入库
+├── generated/                  # xacro 展开产物 bajie_robot.urdf
+├── .prefix/                    # expand_urdf.sh 构造的最小 ament 前缀
+└── .ov-cache/ .ov-data/        # Isaac Sim 着色器/扩展缓存（挂进容器，冷启动从 4 分钟降到几十秒）
 ```
+
+两处容易混淆的约定：
+
+- `log/` 是 colcon 自己写构建日志的目录（名字由 colcon 固定，不能改名），`logs/` 是本项目脚本的运行诊断输出（`/workspace/logs/*.txt` 被脚本硬编码引用）。两者用途不同，不要合并。
+- 根 `inputs/`、`answers/` 是开发时的**工作副本**（容器内路径 `/workspace/inputs|answers`）；`bajie-demo/inputs/`、`bajie-demo/answers/` 是**提交快照**。两处内容可能不一致，提交口径以 `bajie-demo/` 为准。
 
 ---
 
