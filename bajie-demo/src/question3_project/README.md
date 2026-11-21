@@ -65,9 +65,9 @@ bash src/question3_project/run_laptop.sh --case rubik_cube
 ## 运行逻辑
 
 1. `run_touch.py` 逐例重新打开官方场景，将所有 `OmniGraph` 置为 inactive，只保留本题自己创建的桥接图；把底盘与玩具按输入位姿摆到世界中，并用内存中的 `FixedJoint` 锚定底盘。
-2. 设置 CPU PhysX、60 Hz 固定步长，并在玩具与两个指尖上启用接触报告；`touch.py` 的 `Planner` 先解一个朝下的接近位姿，再以 12 mm 步长下降，每一步都在 URDF 关节限位内求解 IK。
+2. 设置 CPU PhysX、60 Hz 固定步长，并在玩具与两个指尖上启用接触报告；`touch.py` 从官方 URDF 的 `gripper_left_link` 碰撞盒算出指尖垫相对 `objects_link` 的偏移（约向下 8.5 mm、侧向 40 mm），用**指尖垫**而不是工具原点对准玩具，再以 4 mm 步长下降；下降深度取玩具包围盒顶部与放置原点中的较低者，避免不规则玩具（如恐龙的最高点在头部）只被“够到上方空气”。
 3. `bridge.py` 建立 `/q3/joint_states`（发布）、`/q3/joint_command`（订阅）、`/q3/clock`，由 `ArticulationController` 驱动 articulation。只有指 1 接收位置指令，指 2 是 USD 侧 mimic。
-4. 接触判定同时满足：接触双方必须是指定玩具与 `gripper_left_link`/`gripper_right_link`；接触冲量模 > `1e-6`；接触分离距离 ≤ `0.001 m`。一旦确认，立即读取当步的 10 个实际关节、`base_footprint`/`objects_link`/玩具的世界位姿并组装作答。
+4. 接触判定同时满足：接触双方必须是指定玩具与 `gripper_left_link`/`gripper_right_link`；接触冲量模 > `1e-6`；接触分离距离 ≤ `0.001 m`。首次接触后继续下压最多 3 mm（每毫米一步），只有接触持续存在才读取该步的 10 个实际关节、`base_footprint`/`objects_link`/玩具的世界位姿并组装作答。
 5. 三例全部通过后，才按输入顺序**原子替换** `q3_demo_output.jsonl`；任何一例失败都不会写出正式作答。`--case` 只校验单例并打印结果。
 
 ### 作答字段

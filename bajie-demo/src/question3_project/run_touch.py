@@ -113,27 +113,6 @@ def run_case(app, case, scene, planner, gui=False):
     toy_range = (UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
                  .ComputeWorldBound(stage.GetPrimAtPath(toy)).ComputeAlignedRange())
     toy_top = float(toy_range.GetMax()[2])
-
-    def highest_surface(prim):
-        """Return the centroid of the toy's highest vertices, so irregular toys are aimed by surface."""
-        best, best_top = None, -np.inf
-        cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
-        for p in Usd.PrimRange(prim):
-            bound = cache.ComputeWorldBound(p).ComputeAlignedRange()
-            if bound.IsEmpty():
-                continue
-            top = float(bound.GetMax()[2])
-            if top > best_top:
-                best, best_top = p, top
-        if best is None or not best.IsA(UsdGeom.Mesh):
-            return None
-        points = UsdGeom.Mesh(best).GetPointsAttr().Get()
-        if not points:
-            return None
-        matrix = np.asarray(UsdGeom.XformCache().GetLocalToWorldTransform(best), dtype=float).T
-        world = np.asarray(points, dtype=float) @ matrix[:3, :3].T + matrix[:3, 3]
-        top = world[:, 2].max()
-        return world[world[:, 2] >= top - .002].mean(axis=0)
     # The task holds the mobile base at the input pose; this is an in-memory world anchor.
     anchor = UsdPhysics.FixedJoint.Define(stage, '/World/BajieQ3BaseAnchor')
     anchor.CreateBody1Rel().SetTargets([BASE])
@@ -213,11 +192,9 @@ def run_case(app, case, scene, planner, gui=False):
             raise RuntimeError(f'Official FK does not match sim: predicted={start_fk[:3,3]} actual={actual_hand[:3,3]}')
 
         aim = case.target[:3, 3].copy()
-        surface = highest_surface(stage.GetPrimAtPath(toy))
-        if surface is not None:
-            aim = surface
-        # 用玩具实际最高表面和指尖偏移计算下降深度，避免停在玩具上方。
-        bottom = max(.004, aim[2] + planner.pad_down - .002)
+        # 取玩具顶部与放置原点中较低者作为下探基准：不规则玩具（如恐龙）的最高点
+        # 可能不在原点上方，只看包围盒顶部会停在半空。
+        bottom = max(.004, min(toy_top, aim[2]) + planner.pad_down - .003)
         log(f'{case.id}: toy_top={toy_top:.4f} m aim={np.round(aim, 4).tolist()} '
             f'pad_down={planner.pad_down:.4f} m descent_bottom={bottom:.4f} m')
         waypoints = list(planner.descent(aim, bottom=bottom, step=.004))
