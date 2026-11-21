@@ -9,7 +9,8 @@ import traceback
 
 import numpy as np
 
-from touch import ARM, JOINTS, TOYS, Planner, answer, contact_pair, load_cases, rigid_inverse, smooth_segment, write_answers
+from touch import (JOINTS, TOYS, Planner, TouchMiss, answer, check_touch, classify_contact,
+                   execute_adaptive, load_cases, rigid_inverse, run_strategy, smooth_segment, write_answers)
 from bridge import install_bridge
 
 ROBOT = '/World/abr_machine/robot_root'
@@ -50,7 +51,31 @@ def focus_viewport(stage, base):
         log(f'viewport camera setup skipped: {exc}')
 
 
-def run_case(app, case, scene, planner, gui=False):
+def collider_points(colliders, base, Usd, UsdGeom):
+    """Sample authored collider geometry in robot base coordinates, not render bounds."""
+    time_code = Usd.TimeCode.Default()
+    transforms = UsdGeom.XformCache(time_code)
+    to_base = rigid_inverse(base)
+    arrays = []
+    for prim in colliders:
+        geometry = UsdGeom.Mesh(prim)
+        if geometry:
+            points = np.array(geometry.GetPointsAttr().Get(time_code), dtype=float)
+            if points.size == 0:
+                continue
+        elif prim.IsA(UsdGeom.Cube):
+            half = float(UsdGeom.Cube(prim).GetSizeAttr().Get(time_code)) / 2
+            linear = np.linspace(-half, half, 9)
+            points = np.stack(np.meshgrid(linear, linear, linear, indexing='ij'), axis=-1).reshape(-1, 3)
+            points = points[np.any(np.abs(points) == half, axis=1)]
+        else:
+            continue
+        pose = to_base @ np.asarray(transforms.GetLocalToWorldTransform(prim)).T
+        arrays.append(points @ pose[:3, :3].T + pose[:3, 3])
+    return np.vstack(arrays) if arrays else np.empty((0, 3))
+
+
+def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
     import carb
     import omni.graph.core as og
     import omni.timeline
@@ -84,7 +109,7 @@ def run_case(app, case, scene, planner, gui=False):
     if ctx.get_stage() is not None:
         ctx.close_stage()
         app.update()
-    log(f'{case.id}: opening {scene}')
+    log(f'{case.id}: strategy={strategy} opening {scene}')
     if not ctx.open_stage(str(scene)):
         raise RuntimeError('Official scene failed to open')
     stage = ctx.get_stage()
@@ -96,7 +121,9 @@ def run_case(app, case, scene, planner, gui=False):
     for path in (toy, HAND, BASE, *FINGERS):
         if not stage.GetPrimAtPath(path):
             raise RuntimeError(f'Missing official scene prim: {path}')
-    if not any(p.HasAPI(UsdPhysics.CollisionAPI) for p in Usd.PrimRange(stage.GetPrimAtPath(toy))):
+    colliders = [p for p in Usd.PrimRange(stage.GetPrimAtPath(toy))
+                 if p.HasAPI(UsdPhysics.CollisionAPI) and UsdPhysics.CollisionAPI(p).GetCollisionEnabledAttr().Get()]
+    if not colliders:
         raise RuntimeError(f'Missing toy colliders; install the complete official models/: {toy}')
     for p in stage.Traverse():
         if p.IsA(UsdPhysics.Scene):
@@ -122,20 +149,27 @@ def run_case(app, case, scene, planner, gui=False):
     if gui:
         app.update()
         focus_viewport(stage, world(BASE))
-    for path in (toy, *FINGERS):
+    robot_prims = Usd.PrimRange(stage.GetPrimAtPath(ROBOT))
+    moving = set(FINGERS) | {str(p.GetPath()) for p in robot_prims if p.HasAPI(UsdPhysics.RigidBodyAPI)
+                             and p.GetName() in ('gripper_link', *(f'arm{i}_link' for i in range(1, 7)))}
+    for path in sorted({toy} | moving):
         PhysxSchema.PhysxContactReportAPI.Apply(stage.GetPrimAtPath(path)).CreateThresholdAttr().Set(0.)
-    # Match a specific toy and a specific fingertip at the same physics step.
     contacts = []
+    blocked = []
     def received(headers, data):
         for header in headers:
             if header.type not in (ContactEventType.CONTACT_FOUND, ContactEventType.CONTACT_PERSIST):
                 continue
             a, b = (str(PhysicsSchemaTools.intToSdfPath(v)) for v in (header.actor0, header.actor1))
-            if contact_pair(a, b, toy, FINGERS):
-                for i in range(header.contact_data_offset, header.contact_data_offset + header.num_contact_data):
-                    point = data[i]
-                    if np.linalg.norm(point.impulse) > 1e-6 and point.separation <= .001:
-                        contacts.append((a, b, list(point.position), float(point.separation)))
+            kind = classify_contact(a, b, toy, FINGERS, moving)
+            if kind is None:
+                continue
+            for i in range(header.contact_data_offset, header.contact_data_offset + header.num_contact_data):
+                point = data[i]
+                impulse = float(np.linalg.norm(point.impulse))
+                if impulse > 1e-6 and point.separation <= .001:
+                    entries = contacts if kind == 'target' else blocked
+                    entries.append((a, b, list(point.position), float(point.separation), impulse))
     subscription = get_physx_simulation_interface().subscribe_contact_report_events(received)
     install_bridge(og, BASE)
     node = rclpy.create_node('bajie_q3_touch')
@@ -169,6 +203,7 @@ def run_case(app, case, scene, planner, gui=False):
             msg.position = list(map(float, positions[:-1]))
             pub.publish(msg)
             contacts.clear()
+            blocked.clear()
             app.update()
             rclpy.spin_once(node, timeout_sec=0)
             rclpy.spin_once(node, timeout_sec=0)
@@ -191,6 +226,52 @@ def run_case(app, case, scene, planner, gui=False):
         if np.linalg.norm(start_fk[:3, 3] - actual_hand[:3, 3]) > .035:
             raise RuntimeError(f'Official FK does not match sim: predicted={start_fk[:3,3]} actual={actual_hand[:3,3]}')
 
+        start_toy = world(toy)
+        max_shift = 0.
+        steps = 0
+        blocked_steps = 0
+
+        def advance(positions):
+            nonlocal max_shift, steps, blocked_steps
+            command(positions)
+            steps += 1
+            blocked_steps += bool(blocked)
+            obj = world(toy)
+            max_shift = max(max_shift, float(np.linalg.norm(obj[:3, 3] - start_toy[:3, 3])))
+            return obj
+
+        def report(outcome, phase, detail=''):
+            log(f'{case.id}: strategy={strategy} outcome={outcome} phase={phase} '
+                f'command_steps={steps} max_toy_shift_mm={1000 * max_shift:.3f} '
+                f'non_target_steps={blocked_steps} {detail}')
+
+        if strategy == 'adaptive':
+            phase = 'plan'
+            try:
+                base = world(BASE)
+                points = collider_points(colliders, base, Usd, UsdGeom)
+                label, route = planner.adaptive_waypoints(points, (rigid_inverse(base) @ start_toy)[:3, :3])
+                log(f'{case.id}: profile={label} geometry_points={len(points)} '
+                    f'open_rad={route[1].positions[-2]:.3f} limit_rad={route[-1].positions[-2]:.3f}')
+
+                def observe(positions, current_phase):
+                    nonlocal phase
+                    if phase != current_phase:
+                        phase = current_phase
+                        log(f'{case.id}: adaptive phase={phase}')
+                    obj = advance(positions)
+                    if not check_touch(phase, contacts, blocked):
+                        return None
+                    q = actual()
+                    report('contact', phase, f'contact={contacts[0]} actual={np.round(q, 5).tolist()}')
+                    return answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
+
+                return execute_adaptive(init, route, DT, observe)
+            except TouchMiss as exc:
+                report('miss', phase, f'reason={exc} hand={world(HAND)[:3, 3].round(5).tolist()} '
+                       f'toy={world(toy)[:3, 3].round(5).tolist()} actual={actual().round(5).tolist()}')
+                raise
+
         aim = case.target[:3, 3].copy()
         # 取玩具顶部与放置原点中较低者作为下探基准：不规则玩具（如恐龙）的最高点
         # 可能不在原点上方，只看包围盒顶部会停在半空。
@@ -203,28 +284,30 @@ def run_case(app, case, scene, planner, gui=False):
             target = init.copy()
             target[2:8] = arm
             for positions in smooth_segment(previous, target, DT, speed=.60 if n == 0 else .25):
-                command(positions)
+                obj = advance(positions)
                 if contacts:
                     q = actual()
-                    row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), world(toy))
+                    row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
                     log(f'{case.id}: contact={contacts[0]} actual={np.round(q, 5).tolist()}')
                     pressed = 0
                     # 首次接触后再缓慢下压最多 3 mm，确认接触持续存在，避免只是擦边。
                     for press_arm in planner.press(q[2:8], depth=.003, step=.001):
                         target[2:8] = press_arm
-                        command(target)
+                        obj = advance(target)
                         if not contacts:
                             break
                         q = actual()
-                        row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), world(toy))
+                        row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
                         pressed += 1
                     log(f'{case.id}: press_steps={pressed} '
                         f'hand_z={world(HAND)[2, 3]:.4f} toy_top={toy_top:.4f}')
+                    report('contact', 'descent')
                     return row
             if n == 0 or n % 4 == 0 or n == len(waypoints)-1:
                 log(f'{case.id}: waypoint {n}/{len(waypoints)-1} command={np.round(arm, 3).tolist()} actual={np.round(actual()[2:8], 3).tolist()} hand={world(HAND)[:3, 3].round(4).tolist()} toy={world(toy)[:3,3].round(4).tolist()}')
             previous = target
-        raise RuntimeError(f'{case.id}: no verified fingertip contact')
+        report('miss', 'descent', 'reason=no verified fingertip contact')
+        raise TouchMiss(f'{case.id}: no verified fingertip contact')
     finally:
         tl.stop()
         subscription = None
@@ -239,6 +322,8 @@ def main():
     group.add_argument('--output', type=Path, help='Write all three verified rows atomically')
     group.add_argument('--case', choices=list(TOYS), help='Verify one toy; never write the final answer')
     p.add_argument('--gui', action='store_true', help='Open an Isaac Sim window and render the scene')
+    p.add_argument('--strategy', default='baseline', choices=('baseline', 'adaptive', 'adaptive-fallback'),
+                   help='Compare adaptive light-close against the original descent')
     args = p.parse_args()
     cases = load_cases(args.input)
     selected = [c for c in cases if args.case is None or args.case == c.name]
@@ -278,8 +363,12 @@ def main():
         import rclpy
         rclpy.init(args=[])
         try:
-            rows = [run_case(app, c, args.scene.resolve(), planner, args.gui)
-                    for c, planner in zip(selected, planners)]
+            rows = []
+            for case, planner in zip(selected, planners):
+                def attempt(strategy):
+                    # Each call closes the stage and restores input poses and joints.
+                    return run_case(app, case, args.scene.resolve(), planner, args.gui, strategy)
+                rows.append(run_strategy(args.strategy, attempt, lambda text: log(f'{case.id}: {text}')))
         finally:
             rclpy.shutdown()
         if args.output:

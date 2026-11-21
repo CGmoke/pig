@@ -42,6 +42,7 @@ bash src/question3_project/run_laptop.sh 2>&1 | tee assets/q3_run.log
 | `BAJIE_SIM_DIR` | 必填 | 含 `scene/abr_scene.usd` 与 `models/` 的官方资源根目录 |
 | `BAJIE_URDF` | 必填 | 展开后的官方 URDF 绝对路径 |
 | `Q3_RESULT_DIR` | `bajie-demo/answers` | 输出目录，必须已存在；容器内挂到 `/result` |
+| `Q3_STRATEGY` | `baseline` | `adaptive` 只试轻触新动作；`adaptive-fallback` 遇到预期接触失败时，重新加载场景并回退该例 |
 | `Q3_IMAGE` | `bajie/sim:humble45` | 容器镜像标签 |
 | `Q3_GUI` | `0` | `1` 时打开 Isaac Sim 原生窗口；需要 `DISPLAY`，改用 host 网络与 12 GiB 内存 |
 | `Q3_CACHE_DIR` | `~/.cache/bajie-q3-kit` | GUI 模式下的 Kit 着色器/数据缓存，需持久化，否则每次重编 RTX 着色器 |
@@ -67,7 +68,7 @@ bash src/question3_project/run_laptop.sh --case rubik_cube
 1. `run_touch.py` 逐例重新打开官方场景，将所有 `OmniGraph` 置为 inactive，只保留本题自己创建的桥接图；把底盘与玩具按输入位姿摆到世界中，并用内存中的 `FixedJoint` 锚定底盘。
 2. 设置 CPU PhysX、60 Hz 固定步长，并在玩具与两个指尖上启用接触报告；`touch.py` 从官方 URDF 的 `gripper_left_link` 碰撞盒算出指尖垫相对 `objects_link` 的偏移（约向下 8.5 mm、侧向 40 mm），用**指尖垫**而不是工具原点对准玩具，再以 4 mm 步长下降；下降深度取玩具包围盒顶部与放置原点中的较低者，避免不规则玩具（如恐龙的最高点在头部）只被“够到上方空气”。
 3. `bridge.py` 建立 `/q3/joint_states`（发布）、`/q3/joint_command`（订阅）、`/q3/clock`，由 `ArticulationController` 驱动 articulation。只有指 1 接收位置指令，指 2 是 USD 侧 mimic。
-4. 接触判定同时满足：接触双方必须是指定玩具与 `gripper_left_link`/`gripper_right_link`；接触冲量模 > `1e-6`；接触分离距离 ≤ `0.001 m`。首次接触后继续下压最多 3 mm（每毫米一步），只有接触持续存在才读取该步的 10 个实际关节、`base_footprint`/`objects_link`/玩具的世界位姿并组装作答。
+4. 接触判定同时满足：接触双方必须是指定玩具与 `gripper_left_link`/`gripper_right_link`；接触冲量模 > `1e-6`；接触分离距离 ≤ `0.001 m`。基线首次接触后尝试再下压最多 3 mm，保留最后一次有效接触的快照；新策略在触碰阶段首次有效接触就原地结束，不再收拢或下压。两种策略均从有效接触的同一步读取 10 个实际关节及三个坐标系的变换。
 5. 三例全部通过后，才按输入顺序**原子替换** `q3_demo_output.jsonl`；任何一例失败都不会写出正式作答。`--case` 只校验单例并打印结果。
 
 ### 作答字段
@@ -77,6 +78,41 @@ bash src/question3_project/run_laptop.sh --case rubik_cube
 - `scene_object_in_objects_link`：玩具相对夹爪。
 
 输入见 [`q3_demo_input.jsonl`](../../inputs/q3_demo_input.jsonl)，每例给出 `base_footprint_in_world`、`scene_object_in_world`、初始 `joint_state` 与玩具名（`rubik_cube` / `dinosaur` / `soft_toy`）。
+
+### 自适应轻触与对照
+
+- **魔方**：让闭合方向对齐实际玩具坐标系的一条侧面法向；在高处转腕和张开，下降到侧面上部，再固定手腕低速收指。
+- **恐龙**：官方场景试验中，两指从窄侧收拢容易跨过收窄的轮廓而不接触。优先找主体上部作单指轻触，避免硬包头尾；没有可达的上部候选时才尝试窄侧候选。
+- **软玩具**：优先用一侧指垫对准上部的宽表面，最后短距离下降并小幅收指；不强求双指接触。
+
+规划使用官方 USD 启用的网格/方盒碰撞几何和官方 URDF 指垫盒；这是保守筛选，不是完整的全臂避碰证明。若提前碰到玩具、监测到非目标碰撞或到达末点仍无真实接触，不计为新动作成功。`adaptive-fallback` 此时关闭并重新打开官方场景，恢复输入里的底盘、玩具、关节后再走基线；桥接/场景错误不会被当成接触失败吞掉。
+
+对照试验使用单独目录，避免覆盖提交答案和已有日志。新策略的三例输出要求显式指定非正式答案目录：
+
+```bash
+set -o pipefail
+compare=$(mktemp -d /tmp/bajie-q3-compare.XXXXXX)
+mkdir -p "$compare/baseline" "$compare/adaptive"
+Q3_STRATEGY=baseline Q3_RESULT_DIR="$compare/baseline" \
+  bash src/question3_project/run_laptop.sh 2>&1 | tee "$compare/baseline/run.log"
+Q3_STRATEGY=adaptive-fallback Q3_RESULT_DIR="$compare/adaptive" \
+  bash src/question3_project/run_laptop.sh 2>&1 | tee "$compare/adaptive/run.log"
+grep -h 'outcome=' "$compare"/*/run.log
+```
+
+每条 `outcome=` 单独报告策略、成败、阶段、指令步数、目标原点最大平移（毫米）和监测到非目标接触的步数。比较时逐例看 `strategy=adaptive` 是否真正成功，不把回退结果计入新动作成功率。题面没有公开这几个指标的计分权重。
+
+#### 官方场景对照结果（2026-11-21）
+
+Isaac Sim 4.5 / ROS 2 Humble，无界面。同一组官方输入下，基线与最终新策略各 **3/3** 触碰成功；最终新策略无回退。以下是从每次运动开始到记录完成时，玩具坐标原点观测到的最大平移，不代表多次试验的统计值。
+
+| 玩具 | 新策略的真实触碰动作 | 最大平移：基线 → 新策略 | 指令步数：基线 → 新策略 |
+| --- | --- | ---: | ---: |
+| 魔方 | 固定手腕，收拢时左指碰侧面 | 0.205 → 0.041 mm | 470 → 1105 |
+| 恐龙 | 左指向主体上部短距下降并轻合 | 0.306 → 0.152 mm | 536 → 690 |
+| 软玩具 | 左指轻触上部，未继续收拢 | 0.270 → 0.022 mm | 476 → 811 |
+
+两组均未监测到非目标接触。调试轮中，恐龙的窄侧闭合路线未触碰；同一轮实测关闭场景、完整复位后由基线触碰成功。展示推荐 `adaptive-fallback`：优先用动作更清楚、玩具移动更小的新策略，同时保留基线兜底；若更看重耗时，仍可使用默认 `baseline`。工作区试验日志和答案单独保存在 `logs/q3-compare-2026-11-21/`；正式答案及提交日志未替换。必交视频仍需在 GUI 中录制。
 
 ## 原生 GUI 仿真
 
@@ -96,7 +132,7 @@ Q3_GUI=1 bash src/question3_project/run_laptop.sh
 python3 -m unittest discover -s src/question3_project/tests -v
 ```
 
-覆盖：三例输入与目标坐标、作答坐标系换算、smoothstep 端点与速度上限、接触必须是指定玩具与指定手指。
+覆盖三例输入与作答坐标系、轨迹端点与速度限制、按形状转腕、用官方 URDF 求解三例动作、夹爪几何筛选、首触即停和失败回退。自适应规划测试使用合成碰撞点；测试需要工作区的 `generated/bajie_robot.urdf`，独立提交目录可用 `BAJIE_URDF` 指定。真实接触仍须用 Isaac Sim 验证。
 
 ## 常见问题
 

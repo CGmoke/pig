@@ -5,7 +5,13 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project=$(cd -- "$here/../.." && pwd)
 scene=$(realpath "${BAJIE_SIM_DIR:?Set BAJIE_SIM_DIR to the complete official model directory}")
 urdf=$(realpath "${BAJIE_URDF:?Set BAJIE_URDF to the expanded official URDF}")
+strategy=${Q3_STRATEGY:-baseline}
+[[ $strategy =~ ^(baseline|adaptive|adaptive-fallback)$ ]] || { echo 'Invalid Q3_STRATEGY' >&2; exit 2; }
 out=$(realpath "${Q3_RESULT_DIR:-$project/answers}")
+if [[ $strategy != baseline && $out == "$project/answers" && $# == 0 ]]; then
+    echo '新策略必须用 Q3_RESULT_DIR 指定独立的试验输出目录。' >&2
+    exit 2
+fi
 [[ -d $out && -f $urdf && -f $scene/scene/abr_scene.usd && -d $scene/models ]] || { echo 'Missing output directory, official USD/URDF, or models directory' >&2; exit 2; }
 name=bajie-q3-safe
 available() { awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo; }
@@ -19,6 +25,7 @@ if (($#)); then
     [[ $# == 2 && $1 == --case && $2 =~ ^(rubik_cube|dinosaur|soft_toy)$ ]] || { echo 'Usage: run_laptop.sh [--case rubik_cube|dinosaur|soft_toy]' >&2; exit 2; }
     args=("$@")
 fi
+args+=(--strategy "$strategy")
 extra=()
 if [[ ${Q3_GUI:-0} == 1 ]]; then
     [[ -n ${DISPLAY:-} ]] || { echo '未启动：Q3_GUI=1 需要图形桌面，但 DISPLAY 为空。' >&2; exit 1; }

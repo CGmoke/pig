@@ -123,6 +123,8 @@ bash src/question3_project/run_laptop.sh 2>&1 | tee assets/q3_run.log
 
 输入：[三组测例](inputs/q3_demo_input.jsonl)。输出：[正式作答](answers/q3_demo_output.jsonl)和[完整日志](assets/q3_run.log)。三例均通过才替换答案。题三必交视频预计命名为 `q3_touch.mp4`，尚未生成。
 
+试验版增加了按玩具转腕、轻合即停的动作，官方场景对照中三例均真实触碰。默认仍跑基线；要试拍新动作，见[自适应策略、对照结果与独立输出方式](src/question3_project/README.md#自适应轻触与对照)。
+
 ## 提交材料
 
 - [`assets/`](assets/README.md)：提交用的完整运行日志。题三实测见 `q3_run.log`，原桥接基线仅供诊断。

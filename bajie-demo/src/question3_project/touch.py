@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 from tempfile import NamedTemporaryFile
 import xml.etree.ElementTree as ET
+from itertools import product
 
 import numpy as np
 
@@ -106,6 +107,122 @@ def contact_pair(a, b, toy, fingers):
     return (a == toy and b in fingers) or (b == toy and a in fingers)
 
 
+def classify_contact(a, b, toy, fingers, moving_bodies):
+    if contact_pair(a, b, toy, fingers):
+        return 'target'
+    if a in moving_bodies or b in moving_bodies:
+        return 'blocked'
+    return None
+
+
+class TouchMiss(RuntimeError):
+    """Expected adaptive planning or contact failure; eligible for a clean retry."""
+
+
+@dataclass(frozen=True)
+class Waypoint:
+    phase: str
+    positions: np.ndarray
+
+
+@dataclass(frozen=True)
+class TouchPose:
+    label: str
+    rotation: np.ndarray
+    hover: np.ndarray
+    approach: np.ndarray
+    touch: np.ndarray
+    open_angle: float
+    touch_angle: float
+
+
+def check_touch(phase, contacts, blocked):
+    if blocked:
+        raise TouchMiss(f'non-target contact: {blocked[0]}')
+    if contacts and phase != 'touch':
+        raise TouchMiss(f'early toy contact in {phase}')
+    return bool(contacts)
+
+
+def execute_adaptive(initial, waypoints, dt, observe_step):
+    """One observation per commanded step; never issue another step after a hit."""
+    previous = initial
+    for waypoint in waypoints:
+        speed = {'align': .45, 'open': .20, 'approach': .25, 'touch': .10}[waypoint.phase]
+        for positions in smooth_segment(previous, waypoint.positions, dt, speed):
+            result = observe_step(positions, waypoint.phase)
+            if result is not None:
+                return result
+        previous = waypoint.positions
+    # A final stationary command allows the bridge/drives to catch up; no further closing.
+    for _ in range(12):
+        result = observe_step(previous, 'touch')
+        if result is not None:
+            return result
+    raise TouchMiss('no verified fingertip contact')
+
+
+def run_strategy(strategy, attempt, report):
+    if strategy != 'adaptive-fallback':
+        return attempt(strategy)
+    try:
+        return attempt('adaptive')
+    except TouchMiss as exc:
+        report(f'adaptive miss ({exc}); reset scene before baseline')
+    return attempt('baseline')
+
+
+_BOX_SIGNS = np.array(list(product((-1., 1.), repeat=3)))
+
+
+def _transform_points(pose, points):
+    return points @ pose[:3, :3].T + pose[:3, 3]
+
+
+class GripperGeometry:
+    """Collision box corners in the URDF, with the distal box last on each finger."""
+
+    def __init__(self, urdf):
+        root = ET.parse(urdf).getroot()
+        links = {link.get('name'): link for link in root.findall('link')}
+        joints = {joint.get('name'): joint for joint in root.findall('joint')}
+        self.tool = rigid_inverse(BajieChain.from_urdf(
+            urdf, base='gripper_link', tip='objects_link').forward({}))
+        self.fingers = []
+        for i, side in enumerate(('left', 'right'), 1):
+            link = f'gripper_{side}_link'
+            joint = joints[f'arm_finger_joint{i}']
+            origin = self.origin(joint.find('origin'))
+            axis = np.array(joint.find('axis').get('xyz').split(), dtype=float)
+            self.fingers.append((self.tool @ origin, axis / np.linalg.norm(axis), self.boxes(links[link])))
+        self.palm = _transform_points(self.tool, self.boxes(links['gripper_link']).reshape(-1, 3))
+
+    @staticmethod
+    def origin(origin):
+        return pose_to_matrix({key: list(map(float, (origin.get(key, '0 0 0') if origin is not None
+                                                     else '0 0 0').split())) for key in ('xyz', 'rpy')})
+
+    @staticmethod
+    def boxes(link):
+        boxes = []
+        for collision in link.findall('collision'):
+            box = collision.find('geometry/box')
+            if box is None:
+                continue
+            half = np.array(box.get('size').split(), dtype=float) / 2
+            boxes.append(_transform_points(GripperGeometry.origin(collision.find('origin')), _BOX_SIGNS * half))
+        if not boxes:
+            raise TouchMiss(f'no URDF collision boxes for {link.get("name")}')
+        return np.array(sorted(boxes, key=lambda b: b[:, 0].max()))
+
+    def at(self, angle):
+        from scipy.spatial.transform import Rotation
+
+        # Official mimic is 1:1. Use each joint's own signed axis, not a mirrored mesh.
+        return np.array([_transform_points(origin, boxes @ Rotation.from_rotvec(axis * angle).as_matrix().T)
+                         for origin, axis, boxes in self.fingers])
+
+
 class Planner:
     """Follow a down-facing gripper pose through incremental IK waypoints."""
 
@@ -121,6 +238,9 @@ class Planner:
             if not float(limit['lower']) - 1e-6 <= case.joints[n] <= float(limit['upper']) + 1e-6:
                 raise ValueError(f'Initial value out of URDF limits: {n}')
         self.pad = finger_pad_offset(urdf, case.joints['arm_finger_joint1'])
+        self.urdf = urdf
+        self.finger_min = max(float(limits[n].get('lower')) for n in JOINTS[-2:])
+        self.finger_max = min(float(limits[n].get('upper')) for n in JOINTS[-2:])
         self.pad_down = float(self.pad[0])
         self.rotation = np.eye(3)
         self.hand_xy = np.zeros(2)
@@ -154,7 +274,7 @@ class Planner:
         floor = max(.004, point[2]) if bottom is None else bottom
         initial = np.array([self.hand_xy[0], self.hand_xy[1], top])
         candidates = []
-        for seed in (self.seed, [0, 1, 2, 0, -1.5, 0], [0, 1, -1.4, 0, 1, 0], [0, -1, -1.5, 0, 1, 0]):
+        for seed in self.approach_seeds():
             try:
                 candidates.append(self.solve(initial, self.rotation, seed))
             except ValueError:
@@ -178,3 +298,182 @@ class Planner:
             except ValueError:
                 return
             yield q
+
+    def adaptive_poses(self, points, toy_rotation):
+        """Propose in base coordinates; authored geometry ranks poses, PhysX verifies them."""
+        points = np.asarray(points, dtype=float)
+        if (points.ndim != 2 or points.shape[1] != 3 or len(points) < 4
+                or not np.isfinite(points).all() or np.ptp(points[:, 2]) < .004):
+            raise TouchMiss('missing or degenerate toy collision geometry')
+        grip = GripperGeometry(self.urdf)
+        ceiling = float(points[:, 2].max())
+        floor = float(points[:, 2].min())
+        down = np.array([0., 0., -1.])
+        radial = self.case.target[:3, 3].copy()
+        radial[2] = 0
+        axes = []
+        for column in (0, 1):
+            axis = toy_rotation[:, column].copy()
+            axis[2] = 0
+            length = np.linalg.norm(axis)
+            if length > 1e-6:
+                axes.append(axis / length)
+        # For organic shapes the collision footprint is often not aligned with the prim axes.
+        if self.case.name != 'rubik_cube':
+            _, vectors = np.linalg.eigh(np.cov(points[:, :2], rowvar=False))
+            axes.extend(np.r_[vectors[:, i], 0.] for i in (0, 1))
+        axes.sort(key=lambda axis: np.ptp(points @ axis) if self.case.name == 'dinosaur'
+                  else abs(axis @ radial))
+        open_angle = self.finger_max - .004
+        sweep = np.linspace(open_angle, self.finger_min + .004, 65)
+        fingers_open = grip.at(open_angle)
+        spans = []
+        for angle in sweep:
+            pads = grip.at(angle)[:, -1]
+            spans.append(float(pads[0, :, 1].min() - pads[1, :, 1].max()))
+        plans = []
+        # Test opposite tool rolls as well: a geometrically identical alignment can
+        # require a very different arm posture under the official joint limits.
+        seen = []
+        for axis in axes:
+            if any(abs(axis @ prev) > .995 for prev in seen):
+                continue
+            seen.append(axis)
+            for closing in (axis, -axis):
+                tangent = np.cross(down, closing)
+                rotation = np.column_stack((down, closing, tangent))
+                u, v = points @ closing, points @ tangent
+                vlo, vhi = float(v.min()), float(v.max())
+                mid = (vlo + vhi) / 2
+                if self.case.name != 'soft_toy':
+                    # Estimate the width around the body, not the dinosaur's head or tail.
+                    strip = np.abs(v - mid) <= max(.021, .23 * (vhi - vlo))
+                    section = points[strip]
+                    if len(section) >= 4:
+                        left, right = float(u[strip].max()), float(u[strip].min())
+                        width = left - right
+                        local_top = float(section[:, 2].max())
+                        # The dinosaur's upper contour tapers inward from the body width.
+                        # Descend into the upper body and reserve a little extra closure.
+                        dinosaur = self.case.name == 'dinosaur'
+                        inset = .19 if dinosaur else .12
+                        pad_z = local_top - np.clip(inset * (local_top - floor), .006, .016)
+                        center = (left + right) / 2
+                        overlap = .011 if dinosaur else .003
+                        hit = next((i for i, span in enumerate(spans) if span <= width - overlap), None)
+                        if hit is not None and hit > 1:
+                            # Full open-finger boxes below the local top must clear
+                            # the toy corridor throughout the descent, not just at the endpoint.
+                            distal = grip.at(float(sweep[hit]))[:, -1]
+                            goal = center * closing + mid * tangent
+                            goal[2] = pad_z + float(distal[:, :, 0].mean())
+                            safe = True
+                            for finger in fingers_open:
+                                for box in finger:
+                                    depth = goal[2] - float(box[:, 0].max())
+                                    a, b = mid + box[:, 2].min() - .002, mid + box[:, 2].max() + .002
+                                    nearby = (v >= a) & (v <= b) & (points[:, 2] >= depth - .002)
+                                    lo = center + box[:, 1].min() - .002
+                                    hi = center + box[:, 1].max() + .002
+                                    if np.any(nearby & (u >= lo) & (u <= hi)):
+                                        safe = False
+                            # Ensure the open distal pads actually flank the target.
+                            if (safe and spans[0] >= width + .010
+                                    and goal[2] - grip.palm[:, 0].max() >= ceiling + .008):
+                                hover = goal.copy()
+                                hover[2] = max(.25, ceiling + .10)
+                                label = 'cube_side' if self.case.name == 'rubik_cube' else 'dinosaur_body'
+                                plans.append(TouchPose(label, rotation, hover, goal, goal.copy(),
+                                                       open_angle, float(sweep[hit])))
+        if self.case.name != 'rubik_cube':
+            # Wide toys needn't fit between both fingers. Aim one distal pad at
+            # an upper-body patch; the small final descent is itself contact-gated.
+            center = (points.min(axis=0) + points.max(axis=0)) / 2
+            central = np.linalg.norm(points[:, :2] - center[:2], axis=1) <= .026
+            patch = points[central] if np.count_nonzero(central) >= 3 else points
+            upper = patch[patch[:, 2] >= np.quantile(patch[:, 2], .8)]
+            opened = float(np.clip(self.case.joints[JOINTS[-2]], self.finger_min + .085, open_angle))
+            closed = opened - .075
+            for axis in seen[:2]:
+                for closing in (axis, -axis):
+                    rotation = np.column_stack((down, closing, np.cross(down, closing)))
+                    for side in (0, 1):
+                        pads = grip.at(closed)
+                        pad = pads[side, -1].mean(axis=0)
+                        pad[0] = pads[side, -1, :, 0].max()
+                        # Try the broad upper patch first, then move that pad toward
+                        # the side that leaves the unused finger outside the toy.
+                        inward = closing if side == 0 else -closing
+                        width = np.ptp(points @ inward)
+                        targets = [center - inward * width * fraction for fraction in (0., .32, .46)]
+                        for aim in targets:
+                            samples = upper if np.array_equal(aim, center) else points[
+                                points[:, 2] >= ceiling - .012]
+                            target = samples[np.argmin(np.linalg.norm(samples[:, :2] - aim[:2], axis=1))]
+                            goal = target - rotation @ pad
+                            goal[2] -= .002
+                            projected = (points - goal) @ rotation
+                            other = np.vstack([grip.at(float(a))[1-side] for a in np.linspace(opened, closed, 5)])
+                            if any(np.any(np.all((projected >= box.min(axis=0) - .002)
+                                                 & (projected <= box.max(axis=0) + .002), axis=1))
+                                   for box in other):
+                                continue
+                            if goal[2] - grip.palm[:, 0].max() < ceiling + .006:
+                                continue
+                            hover = goal + np.array([0., 0., max(.25, ceiling + .10) - goal[2]])
+                            approach = goal + np.array([0., 0., .010])
+                            label = 'soft_upper' if self.case.name == 'soft_toy' else 'dinosaur_single'
+                            plans.append(TouchPose(label, rotation, hover, approach, goal, opened, closed))
+                            break
+        if not plans:
+            raise TouchMiss('no collision-geometry candidate with room for the gripper')
+        return plans
+
+    def adaptive_waypoints(self, points, toy_rotation):
+        initial = np.array([self.case.joints[j] for j in JOINTS])
+        last_error = None
+        poses = self.adaptive_poses(points, toy_rotation)
+        # In the official physics scene a narrow side candidate can straddle a
+        # taper without touching. Prefer the upper-body pad descent for this toy.
+        if self.case.name == 'dinosaur':
+            poses.sort(key=lambda pose: pose.label != 'dinosaur_single')
+        for pose in poses:
+            starts = []
+            for seed in self.approach_seeds():
+                try:
+                    q = self.solve(pose.hover, pose.rotation, seed)
+                    if not any(np.max(np.abs(q - prior)) < .02 for prior in starts):
+                        starts.append(q)
+                except ValueError as exc:
+                    last_error = exc
+            # Try the IK branch requiring the least initial joint motion first.
+            for q in sorted(starts, key=lambda q: np.max(np.abs(q - self.seed))):
+                try:
+                    route = [Waypoint('align', self._positions(initial, q, initial[-2])),
+                             Waypoint('open', self._positions(initial, q, pose.open_angle))]
+                    for phase, a, b, size in (('approach', pose.hover, pose.approach, .010),
+                                               ('touch', pose.approach, pose.touch, .002)):
+                        count = max(1, math.ceil(np.linalg.norm(b-a) / size))
+                        for i in range(1, count + 1):
+                            if not np.array_equal(a, b):
+                                next_q = self.solve(a + (b-a) * (i/count), pose.rotation, q)
+                                if np.max(np.abs(next_q - q)) > .35:
+                                    raise ValueError('IK branch jumped between adjacent poses')
+                                q = next_q
+                            angle = (pose.open_angle if phase == 'approach' else
+                                     pose.open_angle + (pose.touch_angle - pose.open_angle) * (i/count))
+                            route.append(Waypoint(phase, self._positions(initial, q, angle)))
+                    return pose.label, route
+                except ValueError as exc:
+                    last_error = exc
+        raise TouchMiss(f'no continuous adaptive IK path: {last_error}')
+
+    @staticmethod
+    def _positions(initial, arm, angle):
+        positions = initial.copy()
+        positions[2:8] = arm
+        positions[-2:] = angle
+        return positions
+
+    def approach_seeds(self):
+        return self.seed, [0, 1, 2, 0, -1.5, 0], [0, 1, -1.4, 0, 1, 0], [0, -1, -1.5, 0, 1, 0]
