@@ -19,8 +19,8 @@
 
 ## 环境与依赖
 
-- 官方仿真资源 <https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim>，必须保留 `scene/abr_scene.usd` 与完整的 `models/` 相对目录，只下载入口文件不可用。
-- 按[题二说明](../question2_project/README.md)把官方 Xacro 展开为 URDF，供本题规划求解使用。
+- 官方仿真资源 <https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim>。本工作区已完整放在 `src/bajie_sim`（含 `scene/`、`machine/`、`models/`），无需再下载；换机器时必须保留完整的 `models/` 相对目录，只下载入口文件不可用。
+- 按[题二说明](../question2_project/README.md)准备的官方 URDF，本工作区已展开为 `generated/bajie_robot.urdf`，供本题规划求解使用。
 - Docker、可用的 NVIDIA 容器运行时与 `nvidia-smi`；镜像基于官方 `nvcr.io/nvidia/isaac-sim:4.5.0` 并安装 ROS 2 Humble（Python 3.10，使用 Isaac Sim 自带的 NumPy 与 SciPy）。本机镜像标签为 `bajie/sim:humble45`，可用 `Q3_IMAGE` 指定同环境的其他标签；完整开发工作区提供 `docker/Dockerfile.sim` 作为构建参考。
 
 ## 运行
@@ -28,13 +28,13 @@
 在**作品根目录 `bajie-demo/`**执行：
 
 ```bash
-export BAJIE_SIM_DIR=/绝对路径/完整官方场景目录
-export BAJIE_URDF=/绝对路径/bajie_robot.urdf
+export BAJIE_SIM_DIR=/home/moke/bajie_ws/src/bajie_sim
+export BAJIE_URDF=/home/moke/bajie_ws/generated/bajie_robot.urdf
 set -o pipefail
 bash src/question3_project/run_laptop.sh 2>&1 | tee assets/q3_run.log
 ```
 
-本次笔记本实测路径分别为 `/home/moke/WorkBuddy/Eight-Realms` 和 `/home/moke/bajie_ws/generated/bajie_robot.urdf`。
+本机工作区路径为 `/home/moke/bajie_ws/src/bajie_sim` 与 `/home/moke/bajie_ws/generated/bajie_robot.urdf`；资源迁入工作区后已用这两个路径复跑三例并通过。
 
 ### 启动器参数（环境变量）
 

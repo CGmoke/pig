@@ -12,15 +12,15 @@
 
 - 题一、题二基于 **Ubuntu 22.04 / ROS 2 Humble** 和[官方 URDF 仓库](https://atomgit.com/ecovacs-bajie/ecovacs-bajie-urdf)。模型入口是 `urdf/bajie_robot.urdf.xacro`，请保留原有几何和关节 `origin`。
 - 题三使用 **Isaac Sim 4.5 / ROS 2 Bridge** 和[官方仿真资源仓库](https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim)，入口是 `scene/abr_scene.usd`；保留场景依赖的相对目录，不要只下载入口文件。
-- 资源不随作品重复提交。下载官方完整资源后，下面用 `BAJIE_URDF_DIR`、`BAJIE_SIM_DIR` 指向各自的绝对路径。URDF 可用开发工作区的 `../src/bajie_robot`；仿真资源必须包含 `models/`，只有场景入口的副本不可用。[依赖识别与提交自查](docs/提交自查.md)列出了当前模型入口的校验值。
+- 资源不随作品重复提交。本工作区已备好完整资源：URDF 在 `../src/bajie_robot`，仿真场景在 `../src/bajie_sim`（含 `scene/`、`machine/`、`models/`），无需再下载。换机器时再用 `BAJIE_URDF_DIR`、`BAJIE_SIM_DIR` 指向各自的绝对路径；仿真资源必须包含 `models/`，只有场景入口的副本不可用。[依赖识别与提交自查](docs/提交自查.md)列出了当前模型入口的校验值。
 
 ## 题一：构建并运行
 
 以下命令从**本 README 所在目录**执行。需要已经安装 ROS 2 Humble、`colcon`，以及 `rclpy`、`sensor_msgs`、`xacro`、`python3-numpy`、`robot_state_publisher`、`rviz2`、`ament_cmake` 等依赖。RViz 需要可用图形桌面。
 
 ```bash
-export BAJIE_URDF_DIR=/你的模型目录/ecovacs-bajie-urdf
-source /opt/ros/humble/setup.bash
+export BAJIE_URDF_DIR="$(cd .. && pwd)/src/bajie_robot"
+source /opt/ros/humble/setup.bash   # 宿主只有 Jazzy 时改用 /opt/ros/jazzy/setup.bash
 colcon build --base-paths src/question1_project "$BAJIE_URDF_DIR" \
   --packages-select bajie_robot bajie_tasks --cmake-args -DBUILD_TESTING=OFF
 source install/setup.bash
@@ -43,9 +43,10 @@ python3 -m unittest discover -s src/question1_project/test -v
 
 ## 题二：正向运动学与坐标变换
 
-从**本 README 所在目录**执行。先按[题二说明](src/question2_project/README.md)在 Humble 下把官方 Xacro 展开为 URDF，并将 `BAJIE_URDF` 设为展开后文件的绝对路径。有展开文件时，求解只需要 Python 3.10+ 和 NumPy；不需要启动 RViz、Isaac Sim 或 ROS 节点。
+从**本 README 所在目录**执行。工作区已展开好 `../generated/bajie_robot.urdf`，直接设 `BAJIE_URDF` 即可；换机器时按[题二说明](src/question2_project/README.md)重新展开。求解只需要 Python 3.10+ 和 NumPy，不需要启动 RViz、Isaac Sim 或 ROS 节点。
 
 ```bash
+export BAJIE_URDF="$(cd .. && pwd)/generated/bajie_robot.urdf"
 set -o pipefail
 python3 src/question2_project/solve_q2.py --urdf "$BAJIE_URDF" \
   --input inputs/q2_demo_input.jsonl --output answers/q2_demo_output.jsonl 2>&1 | tee assets/q2_run.log
@@ -57,11 +58,11 @@ python3 src/question2_project/solve_q2.py --urdf "$BAJIE_URDF" \
 
 魔方、恐龙、软玩具独立复位后，程序使用官方 URDF 规划夹爪的接近和下降，通过 ROS 2 Bridge 驱动机械臂。只有 PhysX 确认目标玩具与夹爪手指真正接触，才读取该时刻的关节状态和相对位姿。使用 CPU 物理、无渲染运行，不改写官方场景文件。
 
-在**本 README 所在目录**执行。先按[题三运行说明](src/question3_project/README.md)准备官方场景、展开后的 URDF 和 Isaac Sim 4.5 / ROS 2 Humble 镜像：
+在**本 README 所在目录**执行。官方场景与 URDF 已在本工作区，另需 Isaac Sim 4.5 / ROS 2 Humble 镜像（细节见[题三运行说明](src/question3_project/README.md)）：
 
 ```bash
-export BAJIE_SIM_DIR=/绝对路径/完整官方场景目录
-export BAJIE_URDF=/绝对路径/bajie_robot.urdf
+export BAJIE_SIM_DIR="$(cd .. && pwd)/src/bajie_sim"
+export BAJIE_URDF="$(cd .. && pwd)/generated/bajie_robot.urdf"
 set -o pipefail
 bash src/question3_project/run_laptop.sh 2>&1 | tee assets/q3_run.log
 ```

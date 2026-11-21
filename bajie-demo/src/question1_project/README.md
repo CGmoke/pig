@@ -17,7 +17,7 @@
 ## 环境与依赖
 
 - Ubuntu 22.04 + ROS 2 Humble（`rclpy`、`sensor_msgs`、`launch`、`launch_ros`、`ament_index_python`、`xacro`、`robot_state_publisher`、`rviz2`、`python3-numpy`）。
-- 官方 URDF 包 `bajie_robot`，入口为 `urdf/bajie_robot.urdf.xacro`，并提供 `rviz/display.rviz`。
+- 官方 URDF 包 `bajie_robot`（本工作区 `src/bajie_robot`），入口为 `urdf/bajie_robot.urdf.xacro`，并提供 `rviz/display.rviz`。
 - 需要图形桌面才能看到 RViz；无桌面时可只运行节点生成作答。
 
 ## 构建
@@ -25,8 +25,8 @@
 以下命令从**作品目录 `bajie-demo/`**执行：
 
 ```bash
-export BAJIE_URDF_DIR=/你的模型目录/ecovacs-bajie-urdf
-source /opt/ros/humble/setup.bash
+export BAJIE_URDF_DIR=/home/moke/bajie_ws/src/bajie_robot
+source /opt/ros/humble/setup.bash   # 宿主只有 Jazzy 时改用 /opt/ros/jazzy/setup.bash
 colcon build --base-paths src/question1_project "$BAJIE_URDF_DIR" \
   --packages-select bajie_robot bajie_tasks --cmake-args -DBUILD_TESTING=OFF
 source install/setup.bash
