@@ -14,6 +14,70 @@
 - 题三使用 **Isaac Sim 4.5 / ROS 2 Bridge** 和[官方仿真资源仓库](https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim)，入口是 `scene/abr_scene.usd`；保留场景依赖的相对目录，不要只下载入口文件。
 - 资源不随作品重复提交。本工作区已备好完整资源：URDF 在 `../src/bajie_robot`，仿真场景在 `../src/bajie_sim`（含 `scene/`、`machine/`、`models/`），无需再下载。换机器时再用 `BAJIE_URDF_DIR`、`BAJIE_SIM_DIR` 指向各自的绝对路径；仿真资源必须包含 `models/`，只有场景入口的副本不可用。[依赖识别与提交自查](docs/提交自查.md)列出了当前模型入口的校验值。
 
+## 快速启动命令
+
+以下命令均从**本 README 所在目录（`bajie-demo/`）**执行。ROS 命令默认使用 Humble；若宿主只装了 Jazzy（Ubuntu 24.04），把 `/opt/ros/humble/setup.bash` 换成 `/opt/ros/jazzy/setup.bash`，题一、题二已验证可用。
+
+### 题一 · 关节分步驱动（RViz）
+
+```bash
+source /opt/ros/humble/setup.bash
+export BAJIE_URDF_DIR="$(cd .. && pwd)/src/bajie_robot"
+colcon build --base-paths src/question1_project "$BAJIE_URDF_DIR" \
+  --packages-select bajie_robot bajie_tasks --cmake-args -DBUILD_TESTING=OFF
+source install/setup.bash
+ros2 launch bajie_tasks q1_rviz.launch.py \
+  input_file:="$PWD/inputs/q1_demo_input.jsonl" \
+  output_file:="$PWD/answers/q1_demo_output.jsonl"
+```
+
+无图形桌面时只运行驱动节点（不启动 RViz）：
+
+```bash
+ros2 run bajie_tasks q1_drive --ros-args \
+  -p input_file:="$PWD/inputs/q1_demo_input.jsonl" \
+  -p output_file:="$PWD/answers/q1_demo_output.jsonl"
+```
+
+### 题二 · 正向运动学
+
+```bash
+export BAJIE_URDF="$(cd .. && pwd)/generated/bajie_robot.urdf"
+python3 src/question2_project/solve_q2.py --urdf "$BAJIE_URDF" \
+  --input inputs/q2_demo_input.jsonl --output answers/q2_demo_output.jsonl
+```
+
+TF2 独立复核（需要 ROS 2）：
+
+```bash
+source /opt/ros/humble/setup.bash
+ROS_LOCALHOST_ONLY=1 python3 src/question2_project/verify_tf.py \
+  --urdf "$BAJIE_URDF" --input inputs/q2_demo_input.jsonl
+```
+
+### 题三 · Isaac Sim 玩具触碰
+
+```bash
+export BAJIE_SIM_DIR="$(cd .. && pwd)/src/bajie_sim"
+export BAJIE_URDF="$(cd .. && pwd)/generated/bajie_robot.urdf"
+
+bash src/question3_project/run_laptop.sh                    # 无界面，三例正式作答
+bash src/question3_project/run_laptop.sh --case rubik_cube  # 单例排查，不写作答
+Q3_GUI=1 bash src/question3_project/run_laptop.sh           # 原生 Isaac Sim GUI
+```
+
+网页实时预览（两个终端）：
+
+```bash
+# 终端 1：仿真并把逐帧状态写入 answers/frame.json
+Q3_PREVIEW=1 bash src/question3_project/run_laptop.sh
+
+# 终端 2：启动本地网页，打开终端打印的 http://127.0.0.1:<端口>/
+python3 src/question3_project/serve_preview.py answers
+```
+
+三例全部通过后才原子替换 `answers/q3_demo_output.jsonl`；使用 `--case` 时只校验单例、不写作答。可用 `Q3_RESULT_DIR` 指定其他输出目录，`Q3_IMAGE` 覆盖默认镜像 `bajie/sim:humble45`；GUI 模式需要可用的 `DISPLAY`。
+
 ## 题一：构建并运行
 
 以下命令从**本 README 所在目录**执行。需要已经安装 ROS 2 Humble、`colcon`，以及 `rclpy`、`sensor_msgs`、`xacro`、`python3-numpy`、`robot_state_publisher`、`rviz2`、`ament_cmake` 等依赖。RViz 需要可用图形桌面。
