@@ -17,6 +17,32 @@ JOINTS = ('lift_joint', 'pitch_joint', *ARM, 'arm_finger_joint1', 'arm_finger_jo
 TOYS = {'rubik_cube': 'Rubik', 'dinosaur': 'toy_yellow_dragon', 'soft_toy': 'spiderman_grasp'}
 
 
+def finger_pad_offset(urdf, open_angle):
+    """左手指尖垫在 objects_link 坐标系中的位置：+X 向下、+Y 侧向、+Z 径向。"""
+    root = ET.parse(urdf).getroot()
+    distal = None
+    for link in root.findall('link'):
+        if link.attrib['name'] != 'gripper_left_link':
+            continue
+        for collision in link.findall('collision'):
+            box = collision.find('geometry/box')
+            if box is None:
+                continue
+            origin = collision.find('origin')
+            xyz = [float(v) for v in
+                   (origin.get('xyz', '0 0 0') if origin is not None else '0 0 0').split()]
+            half_x = float(box.attrib['size'].split()[0]) / 2
+            candidate = (xyz[0] + half_x, xyz[1], 0.0)
+            if distal is None or candidate[0] > distal[0]:
+                distal = candidate
+    if distal is None:
+        raise ValueError('官方 URDF 缺少 gripper_left_link 的 box 碰撞几何')
+    to_object = BajieChain.from_urdf(urdf, base='gripper_link', tip='objects_link').forward({})
+    to_finger = BajieChain.from_urdf(urdf, base='gripper_link', tip='gripper_left_link').forward(
+        {'arm_finger_joint1': open_angle})
+    return (np.linalg.inv(to_object) @ to_finger @ np.r_[distal, 1.0])[:3]
+
+
 @dataclass(frozen=True)
 class Case:
     id: str
@@ -94,6 +120,10 @@ class Planner:
             limit = limits[n].attrib
             if not float(limit['lower']) - 1e-6 <= case.joints[n] <= float(limit['upper']) + 1e-6:
                 raise ValueError(f'Initial value out of URDF limits: {n}')
+        self.pad = finger_pad_offset(urdf, case.joints['arm_finger_joint1'])
+        self.pad_down = float(self.pad[0])
+        self.rotation = np.eye(3)
+        self.hand_xy = np.zeros(2)
 
     def forward(self, q):
         return self.chain.forward({**self.case.joints, **dict(zip(ARM, map(float, q)))})
@@ -113,25 +143,38 @@ class Planner:
             raise ValueError(f'IK could not reach {point.tolist()} (error={np.linalg.norm(fit.fun):.4f})')
         return fit.x
 
-    def descent(self, point, top=.25, bottom=None):
-        # objects_link +X is the direction from wrist to fingertip.
+    def descent(self, point, top=.25, bottom=None, step=.004):
+        # objects_link +X 指向指尖；把左手指尖垫对准 point，而不是只对准工具原点。
         radial = np.array([point[0], point[1], 0.])
         radial /= np.linalg.norm(radial)
         down = np.array([0., 0., -1.])
-        rotation = np.column_stack((down, np.cross(radial, down), radial))
-        floor = max(.039, point[2]) if bottom is None else bottom
-        initial = point.copy()
-        initial[2] = top
+        self.rotation = np.column_stack((down, np.cross(radial, down), radial))
+        offset = self.rotation @ self.pad
+        self.hand_xy = np.array([point[0], point[1]]) - offset[:2]
+        floor = max(.004, point[2]) if bottom is None else bottom
+        initial = np.array([self.hand_xy[0], self.hand_xy[1], top])
         candidates = []
         for seed in (self.seed, [0, 1, 2, 0, -1.5, 0], [0, 1, -1.4, 0, 1, 0], [0, -1, -1.5, 0, 1, 0]):
             try:
-                candidates.append(self.solve(initial, rotation, seed))
+                candidates.append(self.solve(initial, self.rotation, seed))
             except ValueError:
                 continue
         if not candidates:
             raise ValueError(f'No approach IK solution for {self.case.id}')
         q = min(candidates, key=lambda x: np.linalg.norm(x - self.seed))
         yield q
-        for z in np.linspace(top, floor, 1 + math.ceil((top - floor) / .012))[1:]:
-            q = self.solve(np.array([point[0], point[1], z]), rotation, q)
+        for z in np.linspace(top, floor, 1 + math.ceil((top - floor) / step))[1:]:
+            q = self.solve(np.array([self.hand_xy[0], self.hand_xy[1], z]), self.rotation, q)
+            yield q
+
+    def press(self, q, depth=.003, step=.001):
+        """接触后沿同一方向继续下压，逐毫米给出更深的关节解。"""
+        z = float(self.forward(q)[2, 3])
+        for _ in range(max(0, int(round(depth / step)))):
+            z -= step
+            try:
+                q = self.solve(np.array([self.hand_xy[0], self.hand_xy[1], z]),
+                               self.rotation, q)
+            except ValueError:
+                return
             yield q

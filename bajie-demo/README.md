@@ -66,16 +66,6 @@ bash src/question3_project/run_laptop.sh --case rubik_cube  # 单例排查，不
 Q3_GUI=1 bash src/question3_project/run_laptop.sh           # 原生 Isaac Sim GUI
 ```
 
-网页实时预览（两个终端）：
-
-```bash
-# 终端 1：仿真并把逐帧状态写入 answers/frame.json
-Q3_PREVIEW=1 bash src/question3_project/run_laptop.sh
-
-# 终端 2：启动本地网页，打开终端打印的 http://127.0.0.1:<端口>/
-python3 src/question3_project/serve_preview.py answers
-```
-
 三例全部通过后才原子替换 `answers/q3_demo_output.jsonl`；使用 `--case` 时只校验单例、不写作答。可用 `Q3_RESULT_DIR` 指定其他输出目录，`Q3_IMAGE` 覆盖默认镜像 `bajie/sim:humble45`；GUI 模式需要可用的 `DISPLAY`。
 
 ## 题一：构建并运行

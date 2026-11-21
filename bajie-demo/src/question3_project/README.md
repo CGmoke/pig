@@ -13,9 +13,8 @@
 | [`bridge.py`](bridge.py) | 在内存会话层创建 ROS 2 Action Graph：时钟、关节状态发布、关节指令订阅与 `ArticulationController` |
 | [`run_laptop.sh`](run_laptop.sh) | 笔记本侧 Docker 启动器：资源/显存预检、只读挂载、资源限制、watchdog、GUI 与缓存挂载 |
 | [`physics.kit`](physics.kit) | 无界面体验配置：只用 USD/时间线/PhysX/ROS 2 Bridge，关闭渲染与窗口 |
-| [`preview.py`](preview.py) / [`preview.html`](preview.html) / [`serve_preview.py`](serve_preview.py) | 可选实时观察：写入 `frame.json` 遥测，本地 HTTP 服务渲染网页视图（不依赖 Isaac 渲染器） |
 | [`bridge_probe.py`](bridge_probe.py) | 旧桥接诊断：只验证 `/clock` 与 `/joint_states`，**不用于正式复现** |
-| [`tests/test_touch.py`](tests/test_touch.py) / [`tests/test_preview.py`](tests/test_preview.py) | 输入契约、坐标系换算、smoothstep、接触配对、遥测节流与接触保留 |
+| [`tests/test_touch.py`](tests/test_touch.py) | 输入契约、坐标系换算、smoothstep、接触配对 |
 
 ## 环境与依赖
 
@@ -44,8 +43,7 @@ bash src/question3_project/run_laptop.sh 2>&1 | tee assets/q3_run.log
 | `BAJIE_URDF` | 必填 | 展开后的官方 URDF 绝对路径 |
 | `Q3_RESULT_DIR` | `bajie-demo/answers` | 输出目录，必须已存在；容器内挂到 `/result` |
 | `Q3_IMAGE` | `bajie/sim:humble45` | 容器镜像标签 |
-| `Q3_PREVIEW` | `0` | `1` 时追加 `--preview /result/frame.json`，供网页视图读取 |
-| `Q3_GUI` | `0` | `1` 时打开 Isaac Sim 窗口；需要 `DISPLAY`，改用 host 网络与 12 GiB 内存 |
+| `Q3_GUI` | `0` | `1` 时打开 Isaac Sim 原生窗口；需要 `DISPLAY`，改用 host 网络与 12 GiB 内存 |
 | `Q3_CACHE_DIR` | `~/.cache/bajie-q3-kit` | GUI 模式下的 Kit 着色器/数据缓存，需持久化，否则每次重编 RTX 着色器 |
 
 单独排查一例（**不会**写正式作答）：
@@ -80,17 +78,15 @@ bash src/question3_project/run_laptop.sh --case rubik_cube
 
 输入见 [`q3_demo_input.jsonl`](../../inputs/q3_demo_input.jsonl)，每例给出 `base_footprint_in_world`、`scene_object_in_world`、初始 `joint_state` 与玩具名（`rubik_cube` / `dinosaur` / `soft_toy`）。
 
-## 网页实时视图（可选）
+## 原生 GUI 仿真
 
-不打开 Isaac 渲染器也能观察运动：
+默认以无界面方式运行；需要观察三维画面时使用 Isaac Sim 原生窗口：
 
 ```bash
-Q3_PREVIEW=1 bash src/question3_project/run_laptop.sh          # 终端 1：仿真，写出 answers/frame.json
-python3 src/question3_project/serve_preview.py answers         # 终端 2：只监听 127.0.0.1 随机端口
-# 打开终端 2 打印的 http://127.0.0.1:<port>/
+Q3_GUI=1 bash src/question3_project/run_laptop.sh
 ```
 
-`preview.py` 以最高 16 Hz 写入 `frame.json`（临时文件 + `replace` 原子替换），接触帧会强制刷新并累计 `hits`；`serve_preview.py` 只提供 `preview.html` 与 `/state`，不访问外网。GUI 模式（`Q3_GUI=1`）则直接打开 Isaac Sim 窗口并把相机对准机器人。
+启动器会挂载 X11 与 Kit 缓存（`Q3_CACHE_DIR`），窗口分辨率 960×540，相机自动对准机器人。GUI 模式内存上限 12 GiB、运行上限 900 秒，需要可用的 `DISPLAY`。首次启动需编译 RTX 着色器，耗时较长。
 
 ## 测试
 
@@ -100,7 +96,7 @@ python3 src/question3_project/serve_preview.py answers         # 终端 2：只�
 python3 -m unittest discover -s src/question3_project/tests -v
 ```
 
-覆盖：三例输入与目标坐标、作答坐标系换算、smoothstep 端点与速度上限、接触必须是指定玩具与指定手指、遥测节流与跨测例接触保留。
+覆盖：三例输入与目标坐标、作答坐标系换算、smoothstep 端点与速度上限、接触必须是指定玩具与指定手指。
 
 ## 常见问题
 

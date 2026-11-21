@@ -19,9 +19,6 @@ if (($#)); then
     [[ $# == 2 && $1 == --case && $2 =~ ^(rubik_cube|dinosaur|soft_toy)$ ]] || { echo 'Usage: run_laptop.sh [--case rubik_cube|dinosaur|soft_toy]' >&2; exit 2; }
     args=("$@")
 fi
-if [[ ${Q3_PREVIEW:-0} == 1 ]]; then
-    args+=(--preview /result/frame.json)
-fi
 extra=()
 if [[ ${Q3_GUI:-0} == 1 ]]; then
     [[ -n ${DISPLAY:-} ]] || { echo '未启动：Q3_GUI=1 需要图形桌面，但 DISPLAY 为空。' >&2; exit 1; }

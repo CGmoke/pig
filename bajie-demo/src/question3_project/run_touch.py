@@ -11,7 +11,6 @@ import numpy as np
 
 from touch import ARM, JOINTS, TOYS, Planner, answer, contact_pair, load_cases, rigid_inverse, smooth_segment, write_answers
 from bridge import install_bridge
-from preview import Feed
 
 ROBOT = '/World/abr_machine/robot_root'
 BASE = ROBOT + '/base/base_footprint'
@@ -51,7 +50,7 @@ def focus_viewport(stage, base):
         log(f'viewport camera setup skipped: {exc}')
 
 
-def run_case(app, case, scene, planner, preview=None, gui=False):
+def run_case(app, case, scene, planner, gui=False):
     import carb
     import omni.graph.core as og
     import omni.timeline
@@ -69,18 +68,6 @@ def run_case(app, case, scene, planner, preview=None, gui=False):
         m = UsdGeom.XformCache().GetLocalToWorldTransform(stage.GetPrimAtPath(path))
         m = m.RemoveScaleShear()
         return np.asarray(m).T.copy()
-
-    def sample_preview():
-        cache = UsdGeom.XformCache()
-
-        def position(prim):
-            return list(cache.GetLocalToWorldTransform(prim).ExtractTranslation())
-
-        return dict(base=position(stage.GetPrimAtPath(BASE)),
-                    arm=[position(p) for p in preview_arm],
-                    hand=position(stage.GetPrimAtPath(HAND)),
-                    fingers=[position(stage.GetPrimAtPath(p)) for p in FINGERS],
-                    target=position(stage.GetPrimAtPath(toy)))
 
     def place(prim, desired):
         x = UsdGeom.Xformable(prim)
@@ -106,14 +93,6 @@ def run_case(app, case, scene, planner, preview=None, gui=False):
     for path in [p.GetPath() for p in stage.Traverse() if p.GetTypeName() == "OmniGraph"]:
         stage.GetPrimAtPath(path).SetActive(False)
     toy = TOY_ROOT + TOYS[case.name]
-    if preview:
-        # Match link names below the robot to avoid depending on USD group layout.
-        arm_root = stage.GetPrimAtPath(ROBOT)
-        link_names = ('arm_base_link', *(f'arm{i}_link' for i in range(1, 7)))
-        links = {p.GetName(): p for p in Usd.PrimRange(arm_root) if p.GetName() in link_names}
-        if missing := set(link_names) - links.keys():
-            raise RuntimeError(f'Missing preview links: {sorted(missing)}')
-        preview_arm = [links[name] for name in link_names]
     for path in (toy, HAND, BASE, *FINGERS):
         if not stage.GetPrimAtPath(path):
             raise RuntimeError(f'Missing official scene prim: {path}')
@@ -131,6 +110,30 @@ def run_case(app, case, scene, planner, preview=None, gui=False):
     assembly = '/World/abr_machine'
     place(stage.GetPrimAtPath(assembly), case.base @ rigid_inverse(world(BASE)) @ world(assembly))
     place(stage.GetPrimAtPath(toy), case.base @ case.target)
+    toy_range = (UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
+                 .ComputeWorldBound(stage.GetPrimAtPath(toy)).ComputeAlignedRange())
+    toy_top = float(toy_range.GetMax()[2])
+
+    def highest_surface(prim):
+        """Return the centroid of the toy's highest vertices, so irregular toys are aimed by surface."""
+        best, best_top = None, -np.inf
+        cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
+        for p in Usd.PrimRange(prim):
+            bound = cache.ComputeWorldBound(p).ComputeAlignedRange()
+            if bound.IsEmpty():
+                continue
+            top = float(bound.GetMax()[2])
+            if top > best_top:
+                best, best_top = p, top
+        if best is None or not best.IsA(UsdGeom.Mesh):
+            return None
+        points = UsdGeom.Mesh(best).GetPointsAttr().Get()
+        if not points:
+            return None
+        matrix = np.asarray(UsdGeom.XformCache().GetLocalToWorldTransform(best), dtype=float).T
+        world = np.asarray(points, dtype=float) @ matrix[:3, :3].T + matrix[:3, 3]
+        top = world[:, 2].max()
+        return world[world[:, 2] >= top - .002].mean(axis=0)
     # The task holds the mobile base at the input pose; this is an in-memory world anchor.
     anchor = UsdPhysics.FixedJoint.Define(stage, '/World/BajieQ3BaseAnchor')
     anchor.CreateBody1Rel().SetTargets([BASE])
@@ -210,33 +213,37 @@ def run_case(app, case, scene, planner, preview=None, gui=False):
             raise RuntimeError(f'Official FK does not match sim: predicted={start_fk[:3,3]} actual={actual_hand[:3,3]}')
 
         aim = case.target[:3, 3].copy()
-        # Aim one fingertip rather than the empty space between the open fingers.
-        radial = aim[:2] / np.linalg.norm(aim[:2])
-        aim[:2] += .023 * np.array([-radial[1], radial[0]])
-        waypoints = list(planner.descent(aim, bottom=.036))
-        if preview:
-            preview.publish(case.id, case.name, sample_preview, force=True)
+        surface = highest_surface(stage.GetPrimAtPath(toy))
+        if surface is not None:
+            aim = surface
+        # 用玩具实际最高表面和指尖偏移计算下降深度，避免停在玩具上方。
+        bottom = max(.004, aim[2] + planner.pad_down - .002)
+        log(f'{case.id}: toy_top={toy_top:.4f} m aim={np.round(aim, 4).tolist()} '
+            f'pad_down={planner.pad_down:.4f} m descent_bottom={bottom:.4f} m')
+        waypoints = list(planner.descent(aim, bottom=bottom, step=.004))
         previous = init.copy()
         for n, arm in enumerate(waypoints):
             target = init.copy()
             target[2:8] = arm
             for positions in smooth_segment(previous, target, DT, speed=.60 if n == 0 else .25):
-                step_start = time.monotonic() if preview else 0
                 command(positions)
                 if contacts:
                     q = actual()
-                    log(f'{case.id}: contact={contacts[0]} actual={np.round(q, 5).tolist()}')
                     row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), world(toy))
-                    if preview:
-                        actor_a, actor_b, point, _ = contacts[0]
-                        side = 'left' if FINGERS[0] in (actor_a, actor_b) else 'right'
-                        preview.publish(case.id, case.name, sample_preview,
-                                        contact={'point': point, 'finger': side})
-                        time.sleep(.75)
+                    log(f'{case.id}: contact={contacts[0]} actual={np.round(q, 5).tolist()}')
+                    pressed = 0
+                    # 首次接触后再缓慢下压最多 3 mm，确认接触持续存在，避免只是擦边。
+                    for press_arm in planner.press(q[2:8], depth=.003, step=.001):
+                        target[2:8] = press_arm
+                        command(target)
+                        if not contacts:
+                            break
+                        q = actual()
+                        row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), world(toy))
+                        pressed += 1
+                    log(f'{case.id}: press_steps={pressed} '
+                        f'hand_z={world(HAND)[2, 3]:.4f} toy_top={toy_top:.4f}')
                     return row
-                if preview:
-                    preview.publish(case.id, case.name, sample_preview)
-                    time.sleep(max(0., DT - (time.monotonic() - step_start)))
             if n == 0 or n % 4 == 0 or n == len(waypoints)-1:
                 log(f'{case.id}: waypoint {n}/{len(waypoints)-1} command={np.round(arm, 3).tolist()} actual={np.round(actual()[2:8], 3).tolist()} hand={world(HAND)[:3, 3].round(4).tolist()} toy={world(toy)[:3,3].round(4).tolist()}')
             previous = target
@@ -254,10 +261,8 @@ def main():
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument('--output', type=Path, help='Write all three verified rows atomically')
     group.add_argument('--case', choices=list(TOYS), help='Verify one toy; never write the final answer')
-    p.add_argument('--preview', type=Path, help='Sample live scene transforms into a local JSON feed')
     p.add_argument('--gui', action='store_true', help='Open an Isaac Sim window and render the scene')
     args = p.parse_args()
-    preview = Feed(args.preview) if args.preview else None
     cases = load_cases(args.input)
     selected = [c for c in cases if args.case is None or args.case == c.name]
     planners = [Planner(args.urdf, c) for c in selected]
@@ -296,7 +301,7 @@ def main():
         import rclpy
         rclpy.init(args=[])
         try:
-            rows = [run_case(app, c, args.scene.resolve(), planner, preview, args.gui)
+            rows = [run_case(app, c, args.scene.resolve(), planner, args.gui)
                     for c, planner in zip(selected, planners)]
         finally:
             rclpy.shutdown()
