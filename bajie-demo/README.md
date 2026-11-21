@@ -61,12 +61,12 @@ ROS_LOCALHOST_ONLY=1 python3 src/question2_project/verify_tf.py \
 export BAJIE_SIM_DIR="$(cd .. && pwd)/src/bajie_sim"
 export BAJIE_URDF="$(cd .. && pwd)/generated/bajie_robot.urdf"
 
-bash src/question3_project/run_laptop.sh                    # 无界面，三例正式作答
+bash src/question3_project/run_laptop.sh                    # 无界面，三例假夹取，输出到启动器打印的独立目录
 bash src/question3_project/run_laptop.sh --case rubik_cube  # 单例排查，不写作答
 Q3_GUI=1 bash src/question3_project/run_laptop.sh           # 原生 Isaac Sim GUI
 ```
 
-三例全部通过后才原子替换 `answers/q3_demo_output.jsonl`；使用 `--case` 时只校验单例、不写作答。可用 `Q3_RESULT_DIR` 指定其他输出目录，`Q3_IMAGE` 覆盖默认镜像 `bajie/sim:humble45`；GUI 模式需要可用的 `DISPLAY`。
+三例全部通过并归位后才在独立目录写出 `q3_demo_output.jsonl`；使用 `--case` 时只校验单例、不写作答。可用 `Q3_RESULT_DIR` 指定独立输出目录；GUI 模式需要可用的 `DISPLAY`。
 
 ## 题一：构建并运行
 
@@ -110,7 +110,7 @@ python3 src/question2_project/solve_q2.py --urdf "$BAJIE_URDF" \
 
 ## 题三：Isaac Sim 玩具触碰
 
-魔方、恐龙、软玩具独立复位后，程序使用官方 URDF 规划夹爪的接近和下降，通过 ROS 2 Bridge 驱动机械臂。只有 PhysX 确认目标玩具与夹爪手指真正接触，才读取该时刻的关节状态和相对位姿。使用 CPU 物理、无渲染运行，不改写官方场景文件。
+默认执行假夹取：按玩具形状调整手腕，张开接近并停稳，再低速合指；同时确认物理接触和可见表面相接才记录。不拿起玩具，退出后逐步归位，停稳才切换下一独立测例。
 
 在**本 README 所在目录**执行。官方场景与 URDF 已在本工作区，另需 Isaac Sim 4.5 / ROS 2 Humble 镜像（细节见[题三运行说明](src/question3_project/README.md)）：
 
@@ -121,9 +121,7 @@ set -o pipefail
 bash src/question3_project/run_laptop.sh 2>&1 | tee assets/q3_run.log
 ```
 
-输入：[三组测例](inputs/q3_demo_input.jsonl)。输出：[正式作答](answers/q3_demo_output.jsonl)和[完整日志](assets/q3_run.log)。三例均通过才替换答案。题三必交视频预计命名为 `q3_touch.mp4`，尚未生成。
-
-试验版增加了按玩具转腕、轻合即停的动作，官方场景对照中三例均真实触碰。默认仍跑基线；要试拍新动作，见[自适应策略、对照结果与独立输出方式](src/question3_project/README.md#自适应轻触与对照)。
+输入：[三组测例](inputs/q3_demo_input.jsonl)。新结果保存在启动器打印的独立目录；[原作答](answers/q3_demo_output.jsonl)和[原日志](assets/q3_run.log)保留，不自动替换。需要看接触和归位动画时，用 `Q3_GUI=1` 启动，详见[题三运行说明](src/question3_project/README.md)。必交视频 `q3_touch.mp4` 尚未生成。
 
 ## 提交材料
 

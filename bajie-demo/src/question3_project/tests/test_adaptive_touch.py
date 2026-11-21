@@ -60,7 +60,7 @@ class AdaptiveGeometryTests(unittest.TestCase):
         planner, points, rot = self.setup_geometry(1, np.vstack((body, head)), .30)
         self.assertEqual(planner.adaptive_waypoints(points, rot)[0], 'dinosaur_single')
 
-    def test_wide_toy_uses_single_pad_and_short_descent(self):
+    def test_wide_toy_uses_one_pad_and_a_bounded_closure(self):
         for i, label in ((1, 'dinosaur_single'), (2, 'soft_upper')):
             with self.subTest(toy=label):
                 planner, points, rot = self.setup_geometry(i, box_points((-.081, -.075, .006), (.081, .075, .095)), .60)
@@ -68,7 +68,7 @@ class AdaptiveGeometryTests(unittest.TestCase):
                 self.assertEqual(plan.label, label)
                 self.assertGreater(plan.approach[2], plan.touch[2])
                 self.assertGreater(plan.open_angle, plan.touch_angle)
-                self.assertLessEqual(plan.open_angle - plan.touch_angle, .08 + 1e-9)
+                self.assertLessEqual(plan.open_angle - plan.touch_angle, .24)
 
     def test_three_plans_solve_with_official_joint_limits_and_ordered_phases(self):
         for i, dims in enumerate(((.028, .028, .056), (.055, .023, .096), (.048, .037, .105))):
@@ -84,6 +84,36 @@ class AdaptiveGeometryTests(unittest.TestCase):
                     self.assertTrue(np.all(waypoint.positions[2:8] >= planner.lower))
                     self.assertTrue(np.all(waypoint.positions[2:8] <= planner.upper))
                     self.assertEqual(waypoint.positions[-2], waypoint.positions[-1])
+
+    def test_fingers_close_only_after_the_open_wrist_reaches_the_toy(self):
+        for i in range(3):
+            with self.subTest(case=i):
+                x, y, z = ((.028, .028, .056), (.055, .023, .096), (.048, .037, .105))[i]
+                planner, points, rot = self.setup_geometry(
+                    i, box_points((-x, -y, .006), (x, y, z)), .15)
+                _, route = planner.adaptive_waypoints(points, rot)
+                approach = [w for w in route if w.phase == 'approach']
+                close = [w for w in route if w.phase == 'touch']
+                self.assertTrue(approach and close)
+                for w in approach:
+                    np.testing.assert_array_equal(w.positions[-2:], route[1].positions[-2:])
+                for w in close:
+                    np.testing.assert_array_equal(w.positions[:8], approach[-1].positions[:8])
+                self.assertLess(close[-1].positions[-2], approach[-1].positions[-2])
+
+    def test_organic_surface_uses_an_offset_tilted_approach(self):
+        # Finger samples are expressed in each authored finger link frame.
+        fingers = [box_points((.078, .005, -.019), (.096, .018, .019)),
+                   box_points((.078, -.018, -.019), (.096, -.005, .019))]
+        for index in (1, 2):
+            with self.subTest(toy=self.cases[index].name):
+                planner, points, rotation = self.setup_geometry(
+                    index, box_points((-.05, -.04, 0), (.05, .04, .10)), .15)
+                plan = planner.surface_close_poses(points, rotation, fingers)[0]
+                self.assertLess(abs(plan.rotation[2, 0]), 1.)
+                self.assertGreater(plan.open_angle, plan.touch_angle)
+                np.testing.assert_allclose(plan.hover[:2], plan.touch[:2])
+                self.assertGreater(plan.hover[2], plan.touch[2])
 
     def test_missing_geometry_is_a_planning_miss(self):
         planner = touch.Planner(URDF, self.cases[0])
@@ -117,6 +147,30 @@ class AdaptiveExecutionTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertLess(calls[-1][0][-1], .03)
 
+    def test_closing_waits_for_measured_wrist_to_settle(self):
+        init = np.zeros(10)
+        arrived = init.copy()
+        arrived[2] = .002
+        closed = arrived.copy()
+        closed[-2:] = -.02
+        route = [touch.Waypoint('approach', arrived), touch.Waypoint('touch', closed)]
+        frames = []
+
+        def observe(q, phase):
+            frames.append((q.copy(), phase))
+            if phase == 'touch':
+                return 'hit'
+
+        ready = lambda target: len(frames) >= 2
+        self.assertEqual(touch.execute_adaptive(init, route, 1/60, observe, ready), 'hit')
+        self.assertEqual([phase for _, phase in frames], ['approach'] * 5 + ['touch'])
+        for target, _ in frames[:-1]:
+            np.testing.assert_array_equal(target, arrived)
+        frames.clear()
+        with self.assertRaisesRegex(touch.TouchMiss, 'did not settle'):
+            touch.execute_adaptive(init, route, 1/60, observe, lambda target: False)
+        self.assertTrue(all(phase == 'approach' for _, phase in frames))
+
     def test_late_contact_uses_stationary_holds_and_no_contact_is_a_miss(self):
         init = np.zeros(10)
         calls = []
@@ -149,6 +203,28 @@ class AdaptiveExecutionTests(unittest.TestCase):
             with self.subTest(a=a, b=b):
                 self.assertEqual(touch.classify_contact(a, b, 'toy', fingers, moving), result)
                 self.assertEqual(touch.classify_contact(b, a, 'toy', fingers, moving), result)
+
+    def test_suite_continues_only_after_a_miss_that_returned_home(self):
+        attempted = []
+
+        def attempt(case):
+            attempted.append(case)
+            if case == 2:
+                raise touch.RecoveredTouchMiss('visible contact not verified')
+            return case
+
+        rows, misses = touch.run_independent_cases([1, 2, 3], attempt)
+        self.assertEqual(attempted, [1, 2, 3])
+        self.assertEqual(rows, [1, 3])
+        self.assertEqual([(case, str(error)) for case, error in misses],
+                         [(2, 'visible contact not verified')])
+        for exc in (touch.TouchMiss, touch.ReturnFailure):
+            with self.assertRaises(exc):
+                touch.run_independent_cases([1, 2, 3], lambda _: self._raise(exc))
+
+    @staticmethod
+    def _raise(exc):
+        raise exc('cannot continue')
 
     def test_only_expected_miss_triggers_a_new_baseline_attempt(self):
         calls, notices = [], []

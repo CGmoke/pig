@@ -5,14 +5,21 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project=$(cd -- "$here/../.." && pwd)
 scene=$(realpath "${BAJIE_SIM_DIR:?Set BAJIE_SIM_DIR to the complete official model directory}")
 urdf=$(realpath "${BAJIE_URDF:?Set BAJIE_URDF to the expanded official URDF}")
-strategy=${Q3_STRATEGY:-baseline}
+strategy=${Q3_STRATEGY:-adaptive}
 [[ $strategy =~ ^(baseline|adaptive|adaptive-fallback)$ ]] || { echo 'Invalid Q3_STRATEGY' >&2; exit 2; }
-out=$(realpath "${Q3_RESULT_DIR:-$project/answers}")
+if [[ -n ${Q3_RESULT_DIR:-} ]]; then
+    out=$(realpath "$Q3_RESULT_DIR")
+elif [[ $strategy != baseline && $# == 0 ]]; then
+    out=$(mktemp -d "${TMPDIR:-/tmp}/bajie-q3-touch.XXXXXX")
+else
+    out=$project/answers
+fi
 if [[ $strategy != baseline && $out == "$project/answers" && $# == 0 ]]; then
     echo '新策略必须用 Q3_RESULT_DIR 指定独立的试验输出目录。' >&2
     exit 2
 fi
 [[ -d $out && -f $urdf && -f $scene/scene/abr_scene.usd && -d $scene/models ]] || { echo 'Missing output directory, official USD/URDF, or models directory' >&2; exit 2; }
+printf '[q3-launch] strategy=%s result_dir=%s\n' "$strategy" "$out"
 name=bajie-q3-safe
 available() { awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo; }
 gpu_free() { timeout 3s nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | awk 'NR==1 {v=$1} END {print v}'; }

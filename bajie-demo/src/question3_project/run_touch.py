@@ -9,10 +9,11 @@ import traceback
 
 import numpy as np
 
-from touch import (JOINTS, TOYS, Planner, ReturnFailure, TouchMiss, answer, check_touch,
+from touch import (JOINTS, TOYS, Planner, RecoveredTouchMiss, ReturnFailure, TouchMiss, answer, check_touch,
                    classify_contact, execute_adaptive, execute_return, is_surface_contact,
-                   load_cases, rigid_inverse, run_strategy, smooth_segment, write_answers)
+                   load_cases, rigid_inverse, run_independent_cases, run_strategy, smooth_segment, write_answers)
 from bridge import install_bridge
+from surface import VisibleMesh, meshes_touch
 
 ROBOT = '/World/abr_machine/robot_root'
 BASE = ROBOT + '/base/base_footprint'
@@ -266,10 +267,10 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
                 f'command_steps={steps} max_toy_shift_mm={1000 * max_shift:.3f} '
                 f'non_target_steps={blocked_steps} closest_positive_gap_mm={positive_gap} {detail}')
 
-        def return_home(row, hit):
+        def return_home(hit=None):
             # Freeze the score snapshot before releasing. Timeline pause is
             # only for presentation; resume the same physics session to move.
-            if gui:
+            if gui and hit is not None:
                 tl.pause()
                 focus_viewport(stage, np.asarray(hit[2]), close_up=True)
                 hold_until = time.monotonic() + 2.5
@@ -290,37 +291,71 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
                 raise
             log(f'{case.id}: return_home=settled command_steps={count} '
                 f'max_joint_error={error:.6f} max_joint_speed={speed:.6f}')
-            return row
 
         if strategy == 'adaptive':
             phase = 'plan'
+            collision_only = False
             try:
+                visible = {path: VisibleMesh(stage.GetPrimAtPath(path), Usd, UsdGeom)
+                           for path in (toy, *FINGERS)}
                 base = world(BASE)
                 points = collider_points(colliders, base, Usd, UsdGeom)
-                label, route = planner.adaptive_waypoints(points, (rigid_inverse(base) @ start_toy)[:3, :3])
+                planning_cache = UsdGeom.XformCache()
+
+                def local_vertices(path, frame):
+                    vertices = visible[path].triangles(planning_cache).reshape(-1, 3)
+                    inv = rigid_inverse(frame)
+                    return np.unique(vertices @ inv[:3, :3].T + inv[:3, 3], axis=0)
+
+                label, route = planner.adaptive_waypoints(
+                    points, (rigid_inverse(base) @ start_toy)[:3, :3],
+                    visible_points=local_vertices(toy, base),
+                    finger_points=[local_vertices(finger, world(finger)) for finger in FINGERS])
                 log(f'{case.id}: profile={label} geometry_points={len(points)} '
                     f'open_rad={route[1].positions[-2]:.3f} limit_rad={route[-1].positions[-2]:.3f}')
 
                 def observe(positions, current_phase):
-                    nonlocal phase
+                    nonlocal phase, collision_only
                     if phase != current_phase:
                         phase = current_phase
                         log(f'{case.id}: adaptive phase={phase}')
                     obj = advance(positions)
+                    if max_shift > .002:
+                        raise TouchMiss('target moved more than 2 mm; stop closing')
                     if not check_touch(phase, contacts, blocked):
                         return None
+                    cache = UsdGeom.XformCache()
+                    surface = visible[toy].triangles(cache)
+                    for finger in FINGERS:
+                        hits = [entry for entry in contacts if finger in entry[:2]]
+                        if hits and meshes_touch(visible[finger].triangles(cache), surface):
+                            hit = min(hits, key=lambda p: p[3])
+                            break
+                    else:
+                        if not collision_only:
+                            log(f'{case.id}: collision hull touched before visible surfaces')
+                            collision_only = True
+                        return None
                     q = actual()
-                    hit = min(contacts, key=lambda p: p[3])
                     row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
-                    report('contact', phase, f'contact={hit} actual={np.round(q, 5).tolist()}')
+                    report('contact', phase, f'visible_surface=touch contact={hit} actual={np.round(q, 5).tolist()}')
                     return row, hit
 
-                row, hit = execute_adaptive(init, route, DT, observe)
+                def wrist_settled(target):
+                    error = np.abs(actual() - target)
+                    speed = np.abs(a.get_joint_velocities(joint_indices=ids))
+                    return (error[0] <= .001 and np.max(error[1:]) <= .006
+                            and np.max(speed) <= .025)
+
+                row, hit = execute_adaptive(init, route, DT, observe, wrist_settled)
             except TouchMiss as exc:
                 report('miss', phase, f'reason={exc} hand={world(HAND)[:3, 3].round(5).tolist()} '
                        f'toy={world(toy)[:3, 3].round(5).tolist()} actual={actual().round(5).tolist()}')
-                raise
-            return return_home(row, hit)
+                if steps:
+                    return_home()
+                raise RecoveredTouchMiss(str(exc)) from exc
+            return_home(hit)
+            return row
 
         aim = case.target[:3, 3].copy()
         # 取玩具顶部与放置原点中较低者作为下探基准：不规则玩具（如恐龙）的最高点
@@ -354,7 +389,8 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
                     log(f'{case.id}: press_steps={pressed} '
                         f'hand_z={world(HAND)[2, 3]:.4f} toy_top={toy_top:.4f}')
                     report('contact', 'descent', f'contact={hit}')
-                    return return_home(row, hit)
+                    return_home(hit)
+                    return row
             if n == 0 or n % 4 == 0 or n == len(waypoints)-1:
                 log(f'{case.id}: waypoint {n}/{len(waypoints)-1} command={np.round(arm, 3).tolist()} actual={np.round(actual()[2:8], 3).tolist()} hand={world(HAND)[:3, 3].round(4).tolist()} toy={world(toy)[:3,3].round(4).tolist()}')
             previous = target
@@ -376,7 +412,7 @@ def main():
     group.add_argument('--output', type=Path, help='Write all three verified rows atomically')
     group.add_argument('--case', choices=list(TOYS), help='Verify one toy; never write the final answer')
     p.add_argument('--gui', action='store_true', help='Open an Isaac Sim window and render the scene')
-    p.add_argument('--strategy', default='baseline', choices=('baseline', 'adaptive', 'adaptive-fallback'),
+    p.add_argument('--strategy', default='adaptive', choices=('baseline', 'adaptive', 'adaptive-fallback'),
                    help='Compare adaptive light-close against the original descent')
     args = p.parse_args()
     cases = load_cases(args.input)
@@ -417,14 +453,20 @@ def main():
         import rclpy
         rclpy.init(args=[])
         try:
-            rows = []
-            for case, planner in zip(selected, planners):
+            def attempt_case(item):
+                case, planner = item
+
                 def attempt(strategy):
-                    # Each call closes the stage and restores input poses and joints.
                     return run_case(app, case, args.scene.resolve(), planner, args.gui, strategy)
-                rows.append(run_strategy(args.strategy, attempt, lambda text: log(f'{case.id}: {text}')))
+
+                return run_strategy(args.strategy, attempt, lambda text: log(f'{case.id}: {text}'))
+
+            rows, misses = run_independent_cases(zip(selected, planners), attempt_case)
         finally:
             rclpy.shutdown()
+        if misses:
+            raise TouchMiss('no answer written; unverified cases: ' + '; '.join(
+                f'{case.name}: {exc}' for (case, _), exc in misses))
         if args.output:
             write_answers(args.output, cases, rows)
             log(f'wrote three verified contacts: {args.output}')
