@@ -115,8 +115,71 @@ def classify_contact(a, b, toy, fingers, moving_bodies):
     return None
 
 
+def is_surface_contact(separation, impulse):
+    """Reject predictive contacts across a positive gap, even with impulse."""
+    return (math.isfinite(separation) and separation <= 0.
+            and math.isfinite(impulse) and impulse > 1e-6)
+
+
 class TouchMiss(RuntimeError):
     """Expected adaptive planning or contact failure; eligible for a clean retry."""
+
+
+class ReturnFailure(RuntimeError):
+    """Halt the sequence; a verified touch is not permission to skip homing."""
+
+
+def execute_return(initial, visited, dt, step, *, settle_frames=12, max_hold_frames=180):
+    """Retrace measured outbound poses; hold home until all joints stop moving.
+
+    step sends one setpoint and returns measured positions, velocities, target
+    contact and non-target contacts for that frame. No position reset is used.
+    """
+    release_frames = 0
+    released = False
+    position_tol = np.full(len(JOINTS), .01)
+    position_tol[0] = .002  # Lift is prismatic (metres); other joints use radians.
+
+    def checked_step(target):
+        nonlocal release_frames, released
+        positions, velocities, touching, blocked = step(target)
+        if blocked:
+            raise ReturnFailure(f'non-target contact during return: {blocked[0]}')
+        if touching and released:
+            raise ReturnFailure('fingertip touched the toy again during return')
+        release_frames = 0 if touching else release_frames + 1
+        released |= release_frames >= 4
+        return positions, velocities, touching
+
+    # The last measured pose is the starting point, not a future setpoint.
+    # Retrace the near-contact portion more slowly before folding the arm back.
+    previous = visited[-1]
+    travel = 0.
+    count = 0
+    for target in (*reversed(visited[:-1]), initial):
+        distance = float(np.max(np.abs(target - previous)))
+        if distance == 0.:
+            continue
+        speed = .12 if travel < .12 else .40
+        for setpoint in smooth_segment(previous, target, dt, speed):
+            checked_step(setpoint)
+            count += 1
+        travel += distance
+        previous = target
+
+    consecutive = 0
+    for _ in range(max_hold_frames):
+        positions, velocities, touching = checked_step(initial)
+        count += 1
+        error = np.abs(positions - initial)
+        speed = float(np.max(np.abs(velocities)))
+        if not touching and np.all(error <= position_tol) and speed <= .02:
+            consecutive += 1
+            if consecutive >= settle_frames:
+                return count, float(np.max(error)), speed
+        else:
+            consecutive = 0
+    raise ReturnFailure('initial joint state did not settle before the return timeout')
 
 
 @dataclass(frozen=True)

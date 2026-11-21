@@ -9,8 +9,9 @@ import traceback
 
 import numpy as np
 
-from touch import (JOINTS, TOYS, Planner, TouchMiss, answer, check_touch, classify_contact,
-                   execute_adaptive, load_cases, rigid_inverse, run_strategy, smooth_segment, write_answers)
+from touch import (JOINTS, TOYS, Planner, ReturnFailure, TouchMiss, answer, check_touch,
+                   classify_contact, execute_adaptive, execute_return, is_surface_contact,
+                   load_cases, rigid_inverse, run_strategy, smooth_segment, write_answers)
 from bridge import install_bridge
 
 ROBOT = '/World/abr_machine/robot_root'
@@ -25,8 +26,8 @@ def log(message):
     print(f'[q3] {message}', flush=True)
 
 
-def focus_viewport(stage, base):
-    """Point the session camera at the robot when running with a window.
+def focus_viewport(stage, center, close_up=False):
+    """Point the session camera at the robot or the measured contact point.
 
     Writes the camera transform directly instead of using the viewport command
     stack, which fails on stages whose up-axis differs from the Kit default.
@@ -37,16 +38,17 @@ def focus_viewport(stage, base):
         if not cam:
             log('viewport camera setup skipped: /OmniverseKit_Persp not found')
             return
-        center = base[:3, 3]
-        eye = center + np.array([-2.2, -2.2, 1.6])
-        target = center + np.array([0., 0., .5])
+        eye = center + (np.array([-.28, -.22, .14]) if close_up
+                        else np.array([-2.2, -2.2, 1.6]))
+        target = center if close_up else center + np.array([0., 0., .5])
         view = Gf.Matrix4d().SetLookAt(
             Gf.Vec3d(*eye.tolist()), Gf.Vec3d(*target.tolist()), Gf.Vec3d(0, 0, 1))
         xform = UsdGeom.Xformable(cam)
         with Usd.EditContext(stage, stage.GetSessionLayer()):
             xform.ClearXformOpOrder()
             xform.MakeMatrixXform().Set(view.GetInverse())
-        log(f'viewport focused at {np.round(center, 2).tolist()}')
+        label = 'contact close-up' if close_up else 'viewport'
+        log(f'{label} focused at {np.round(center, 4).tolist()}')
     except Exception as exc:
         log(f'viewport camera setup skipped: {exc}')
 
@@ -78,6 +80,7 @@ def collider_points(colliders, base, Usd, UsdGeom):
 def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
     import carb
     import omni.graph.core as og
+    import omni.kit.app
     import omni.timeline
     import omni.usd
     from omni.physx import get_physx_simulation_interface
@@ -148,7 +151,7 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
     anchor.CreateLocalRot0Attr().Set(Gf.Quatf(quat.GetReal(), Gf.Vec3f(*quat.GetImaginary())))
     if gui:
         app.update()
-        focus_viewport(stage, world(BASE))
+        focus_viewport(stage, world(BASE)[:3, 3])
     robot_prims = Usd.PrimRange(stage.GetPrimAtPath(ROBOT))
     moving = set(FINGERS) | {str(p.GetPath()) for p in robot_prims if p.HasAPI(UsdPhysics.RigidBodyAPI)
                              and p.GetName() in ('gripper_link', *(f'arm{i}_link' for i in range(1, 7)))}
@@ -156,7 +159,10 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
         PhysxSchema.PhysxContactReportAPI.Apply(stage.GetPrimAtPath(path)).CreateThresholdAttr().Set(0.)
     contacts = []
     blocked = []
+    target_near = False
+    closest_positive_gap = float('inf')
     def received(headers, data):
+        nonlocal closest_positive_gap, target_near
         for header in headers:
             if header.type not in (ContactEventType.CONTACT_FOUND, ContactEventType.CONTACT_PERSIST):
                 continue
@@ -167,9 +173,18 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
             for i in range(header.contact_data_offset, header.contact_data_offset + header.num_contact_data):
                 point = data[i]
                 impulse = float(np.linalg.norm(point.impulse))
-                if impulse > 1e-6 and point.separation <= .001:
+                gap = float(point.separation)
+                if kind == 'target':
+                    target_near |= gap <= .001
+                    if impulse > 1e-6 and 0. < gap:
+                        closest_positive_gap = min(closest_positive_gap, gap)
+                # Keep the existing conservative obstacle guard; only target
+                # success requires the actual collision surfaces to meet.
+                valid = (is_surface_contact(gap, impulse) if kind == 'target'
+                         else impulse > 1e-6 and gap <= .001)
+                if valid:
                     entries = contacts if kind == 'target' else blocked
-                    entries.append((a, b, list(point.position), float(point.separation), impulse))
+                    entries.append((a, b, list(point.position), gap, impulse))
     subscription = get_physx_simulation_interface().subscribe_contact_report_events(received)
     install_bridge(og, BASE)
     node = rclpy.create_node('bajie_q3_touch')
@@ -200,10 +215,12 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
         msg = JointState()
         msg.name = list(JOINTS[:-1])
         def command(positions):
+            nonlocal target_near
             msg.position = list(map(float, positions[:-1]))
             pub.publish(msg)
             contacts.clear()
             blocked.clear()
+            target_near = False
             app.update()
             rclpy.spin_once(node, timeout_sec=0)
             rclpy.spin_once(node, timeout_sec=0)
@@ -230,10 +247,12 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
         max_shift = 0.
         steps = 0
         blocked_steps = 0
+        visited = [actual().copy()]
 
         def advance(positions):
             nonlocal max_shift, steps, blocked_steps
             command(positions)
+            visited.append(actual().copy())
             steps += 1
             blocked_steps += bool(blocked)
             obj = world(toy)
@@ -241,9 +260,37 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
             return obj
 
         def report(outcome, phase, detail=''):
+            positive_gap = (f'{1e3 * closest_positive_gap:.6f}'
+                            if np.isfinite(closest_positive_gap) else 'none')
             log(f'{case.id}: strategy={strategy} outcome={outcome} phase={phase} '
                 f'command_steps={steps} max_toy_shift_mm={1000 * max_shift:.3f} '
-                f'non_target_steps={blocked_steps} {detail}')
+                f'non_target_steps={blocked_steps} closest_positive_gap_mm={positive_gap} {detail}')
+
+        def return_home(row, hit):
+            # Freeze the score snapshot before releasing. Timeline pause is
+            # only for presentation; resume the same physics session to move.
+            if gui:
+                tl.pause()
+                focus_viewport(stage, np.asarray(hit[2]), close_up=True)
+                hold_until = time.monotonic() + 2.5
+                while time.monotonic() < hold_until and omni.kit.app.get_app().is_running():
+                    app.update()
+                focus_viewport(stage, world(BASE)[:3, 3])
+                tl.play()
+
+            def step(positions):
+                command(positions)
+                return actual(), a.get_joint_velocities(joint_indices=ids), target_near, blocked
+
+            log(f'{case.id}: return_home=start replay_samples={len(visited)}')
+            try:
+                count, error, speed = execute_return(init, visited, DT, step)
+            except ReturnFailure as exc:
+                log(f'{case.id}: return_home=failed reason={exc}')
+                raise
+            log(f'{case.id}: return_home=settled command_steps={count} '
+                f'max_joint_error={error:.6f} max_joint_speed={speed:.6f}')
+            return row
 
         if strategy == 'adaptive':
             phase = 'plan'
@@ -263,14 +310,17 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
                     if not check_touch(phase, contacts, blocked):
                         return None
                     q = actual()
-                    report('contact', phase, f'contact={contacts[0]} actual={np.round(q, 5).tolist()}')
-                    return answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
+                    hit = min(contacts, key=lambda p: p[3])
+                    row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
+                    report('contact', phase, f'contact={hit} actual={np.round(q, 5).tolist()}')
+                    return row, hit
 
-                return execute_adaptive(init, route, DT, observe)
+                row, hit = execute_adaptive(init, route, DT, observe)
             except TouchMiss as exc:
                 report('miss', phase, f'reason={exc} hand={world(HAND)[:3, 3].round(5).tolist()} '
                        f'toy={world(toy)[:3, 3].round(5).tolist()} actual={actual().round(5).tolist()}')
                 raise
+            return return_home(row, hit)
 
         aim = case.target[:3, 3].copy()
         # 取玩具顶部与放置原点中较低者作为下探基准：不规则玩具（如恐龙）的最高点
@@ -287,8 +337,9 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
                 obj = advance(positions)
                 if contacts:
                     q = actual()
+                    hit = min(contacts, key=lambda p: p[3])
                     row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
-                    log(f'{case.id}: contact={contacts[0]} actual={np.round(q, 5).tolist()}')
+                    log(f'{case.id}: contact={hit} actual={np.round(q, 5).tolist()}')
                     pressed = 0
                     # 首次接触后再缓慢下压最多 3 mm，确认接触持续存在，避免只是擦边。
                     for press_arm in planner.press(q[2:8], depth=.003, step=.001):
@@ -296,20 +347,23 @@ def run_case(app, case, scene, planner, gui=False, strategy='baseline'):
                         obj = advance(target)
                         if not contacts:
                             break
+                        hit = min(contacts, key=lambda p: p[3])
                         q = actual()
                         row = answer(case, dict(zip(JOINTS, q)), world(BASE), world(HAND), obj)
                         pressed += 1
                     log(f'{case.id}: press_steps={pressed} '
                         f'hand_z={world(HAND)[2, 3]:.4f} toy_top={toy_top:.4f}')
-                    report('contact', 'descent')
-                    return row
+                    report('contact', 'descent', f'contact={hit}')
+                    return return_home(row, hit)
             if n == 0 or n % 4 == 0 or n == len(waypoints)-1:
                 log(f'{case.id}: waypoint {n}/{len(waypoints)-1} command={np.round(arm, 3).tolist()} actual={np.round(actual()[2:8], 3).tolist()} hand={world(HAND)[:3, 3].round(4).tolist()} toy={world(toy)[:3,3].round(4).tolist()}')
             previous = target
         report('miss', 'descent', 'reason=no verified fingertip contact')
         raise TouchMiss(f'{case.id}: no verified fingertip contact')
     finally:
-        tl.stop()
+        # Leave the arm at the last physical pose until the next independent
+        # test starts; calling stop here would reset it on screen.
+        tl.pause()
         subscription = None
         node.destroy_node()
 

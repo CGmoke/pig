@@ -92,6 +92,17 @@ class AdaptiveGeometryTests(unittest.TestCase):
 
 
 class AdaptiveExecutionTests(unittest.TestCase):
+    def test_target_requires_surface_contact_not_a_positive_gap_with_impulse(self):
+        # Previous GUI run reported ~0.09 mm and ~0.03 mm of separation
+        # for the dinosaur and soft toy, despite a nonzero impulse.
+        for gap in (9.154669533e-5, 2.511030470e-5, 1e-8):
+            self.assertFalse(touch.is_surface_contact(gap, .0007))
+        self.assertTrue(touch.is_surface_contact(0., .0007))
+        self.assertTrue(touch.is_surface_contact(-.0001, .0007))
+        self.assertFalse(touch.is_surface_contact(-.0001, 0.))
+        self.assertFalse(touch.is_surface_contact(float('-inf'), .0007))
+        self.assertFalse(touch.is_surface_contact(0., float('inf')))
+
     def test_contact_returns_same_step_without_further_closing(self):
         init = np.zeros(10)
         target = init.copy()
