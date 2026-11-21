@@ -6,19 +6,19 @@
 
 ## 目录结构
 
-| 路径 | 作用 |
-| --- | --- |
-| [`run_touch.py`](run_touch.py) | 主程序：启动 Kit、打开场景、复位与约束、规划、下发指令、订阅接触与关节反馈、写作答 |
-| [`touch.py`](touch.py) | 纯逻辑：读取三例输入、`Planner` 增量 IK、smoothstep 采样、接触判定、作答组装、原子写文件 |
-| [`bridge.py`](bridge.py) | 在内存会话层创建 ROS 2 Action Graph：时钟、关节状态发布、关节指令订阅与 `ArticulationController` |
-| [`run_laptop.sh`](run_laptop.sh) | 笔记本侧 Docker 启动器：资源/显存预检、只读挂载、资源限制、watchdog、GUI 与缓存挂载 |
-| [`physics.kit`](physics.kit) | 无界面体验配置：只用 USD/时间线/PhysX/ROS 2 Bridge，关闭渲染与窗口 |
-| [`bridge_probe.py`](bridge_probe.py) | 旧桥接诊断：只验证 `/clock` 与 `/joint_states`，**不用于正式复现** |
-| [`tests/test_touch.py`](tests/test_touch.py) | 输入契约、坐标系换算、smoothstep、接触配对 |
+| 路径                                          | 作用                                                                                               |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| [`run_touch.py`](run_touch.py)               | 主程序：启动 Kit、打开场景、复位与约束、规划、下发指令、订阅接触与关节反馈、写作答                 |
+| [`touch.py`](touch.py)                       | 纯逻辑：读取三例输入、`Planner` 增量 IK、smoothstep 采样、接触判定、作答组装、原子写文件         |
+| [`bridge.py`](bridge.py)                     | 在内存会话层创建 ROS 2 Action Graph：时钟、关节状态发布、关节指令订阅与 `ArticulationController` |
+| [`run_laptop.sh`](run_laptop.sh)             | 笔记本侧 Docker 启动器：资源/显存预检、只读挂载、资源限制、watchdog、GUI 与缓存挂载                |
+| [`physics.kit`](physics.kit)                 | 无界面体验配置：只用 USD/时间线/PhysX/ROS 2 Bridge，关闭渲染与窗口                                 |
+| [`bridge_probe.py`](bridge_probe.py)         | 旧桥接诊断：只验证 `/clock` 与 `/joint_states`，**不用于正式复现**                       |
+| [`tests/test_touch.py`](tests/test_touch.py) | 输入契约、坐标系换算、smoothstep、接触配对                                                         |
 
 ## 环境与依赖
 
-- 官方仿真资源 <https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim>。本工作区已完整放在 `src/bajie_sim`（含 `scene/`、`machine/`、`models/`），无需再下载；换机器时必须保留完整的 `models/` 相对目录，只下载入口文件不可用。
+- 官方仿真资源 [https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim](https://atomgit.com/ecovacs-bajie/ecovacs-bajie-sim)。本工作区已完整放在 `src/bajie_sim`（含 `scene/`、`machine/`、`models/`），无需再下载；换机器时必须保留完整的 `models/` 相对目录，只下载入口文件不可用。
 - 按[题二说明](../question2_project/README.md)准备的官方 URDF，本工作区已展开为 `generated/bajie_robot.urdf`，供本题规划求解使用。
 - Docker、可用的 NVIDIA 容器运行时与 `nvidia-smi`；镜像基于官方 `nvcr.io/nvidia/isaac-sim:4.5.0` 并安装 ROS 2 Humble（Python 3.10，使用 Isaac Sim 自带的 NumPy 与 SciPy）。本机镜像标签为 `bajie/sim:humble45`，可用 `Q3_IMAGE` 指定同环境的其他标签；完整开发工作区提供 `docker/Dockerfile.sim` 作为构建参考。
 
@@ -39,15 +39,15 @@ Q3_STRATEGY=adaptive Q3_RESULT_DIR="$out" \
 
 ### 启动器参数（环境变量）
 
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `BAJIE_SIM_DIR` | 必填 | 含 `scene/abr_scene.usd` 与 `models/` 的官方资源根目录 |
-| `BAJIE_URDF` | 必填 | 展开后的官方 URDF 绝对路径 |
-| `Q3_RESULT_DIR` | `bajie-demo/answers` | 输出目录，必须已存在；容器内挂到 `/result` |
-| `Q3_STRATEGY` | `baseline` | `adaptive` 只试轻触新动作；`adaptive-fallback` 遇到预期接触失败时，重新加载场景并回退该例 |
-| `Q3_IMAGE` | `bajie/sim:humble45` | 容器镜像标签 |
-| `Q3_GUI` | `0` | `1` 时打开 Isaac Sim 原生窗口；需要 `DISPLAY`，改用 host 网络与 12 GiB 内存 |
-| `Q3_CACHE_DIR` | `~/.cache/bajie-q3-kit` | GUI 模式下的 Kit 着色器/数据缓存，需持久化，否则每次重编 RTX 着色器 |
+| 变量              | 默认                      | 说明                                                                                          |
+| ----------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| `BAJIE_SIM_DIR` | 必填                      | 含 `scene/abr_scene.usd` 与 `models/` 的官方资源根目录                                    |
+| `BAJIE_URDF`    | 必填                      | 展开后的官方 URDF 绝对路径                                                                    |
+| `Q3_RESULT_DIR` | `bajie-demo/answers`    | 输出目录，必须已存在；容器内挂到 `/result`                                                  |
+| `Q3_STRATEGY`   | `baseline`              | `adaptive` 只试轻触新动作；`adaptive-fallback` 遇到预期接触失败时，重新加载场景并回退该例 |
+| `Q3_IMAGE`      | `bajie/sim:humble45`    | 容器镜像标签                                                                                  |
+| `Q3_GUI`        | `0`                     | `1` 时打开 Isaac Sim 原生窗口；需要 `DISPLAY`，改用 host 网络与 12 GiB 内存               |
+| `Q3_CACHE_DIR`  | `~/.cache/bajie-q3-kit` | GUI 模式下的 Kit 着色器/数据缓存，需持久化，否则每次重编 RTX 着色器                           |
 
 单独排查一例（**不会**写正式作答）：
 
@@ -109,11 +109,11 @@ grep -h 'outcome=' "$compare"/*/run.log
 
 Isaac Sim 4.5 / ROS 2 Humble，无界面，`adaptive`。三个测例均在触碰阶段获得带冲量的非正分离距离，没有回退、没有监测到非目标接触。位移为单轮执行中玩具原点的最大平移。
 
-| 玩具 | 动作 | 接触分离距离 | 玩具最大平移 |
-| --- | --- | ---: | ---: |
-| 魔方 | 固定手腕，收拢时左指碰侧面 | −0.0075 mm | 0.041 mm |
-| 恐龙 | 左指向主体上部短距下降并轻合 | −0.0810 mm | 0.204 mm |
-| 软玩具 | 左指轻触上部，触碰就停 | −0.0216 mm | 0.056 mm |
+| 玩具   | 动作                         | 接触分离距离 | 玩具最大平移 |
+| ------ | ---------------------------- | -----------: | -----------: |
+| 魔方   | 固定手腕，收拢时左指碰侧面   |  −0.0075 mm |     0.041 mm |
+| 恐龙   | 左指向主体上部短距下降并轻合 |  −0.0810 mm |     0.204 mm |
+| 软玩具 | 左指轻触上部，触碰就停       |  −0.0216 mm |     0.056 mm |
 
 复测文件单独保存在工作区的 `logs/q3-surface-headless.q4R5iP/`。此前的 `logs/q3-compare-2026-11-21/` 使用允许正间隙的旧判据，两轮结果不能直接对比。推荐用本次验证过的 `adaptive` 复现；正式答案及提交日志未自动替换。
 
@@ -141,18 +141,18 @@ python3 -m unittest discover -s src/question3_project/tests -v
 
 ## 常见问题
 
-| 现象 | 原因与处理 |
-| --- | --- |
-| `Set BAJIE_SIM_DIR ...` / `Missing output directory...` | 环境变量未设、`Q3_RESULT_DIR` 不存在，或场景缺少 `models/` |
-| `未启动：系统可用内存不足 12800 MiB` | 先关闭浏览器/IDE/其他仿真；这是启动前的硬门槛 |
-| `未启动：显存余量不足 6000 MiB` | 释放显存，确认 `nvidia-smi` 可用且 NVIDIA 容器运行时已配置 |
-| `Missing official scene prim` / `Missing toy colliders` | 官方资源不完整或目录层级不对，重新下载完整 `models/` |
-| `ROS handshake failed` | Bridge 未启用或 ROS 域冲突；确认镜像内含 `isaacsim.ros2.bridge`，并避免与宿主其他演示同域 |
-| `Official FK does not match sim` | URDF 与场景模型不是同一版本，或底盘/玩具摆位错误 |
-| `no verified fingertip contact` | 规划路径未真正触碰；先确认玩具位置与 `models/` 完整，再单独用 `--case` 排查 |
-| `return_home=failed` | 归位遇碰撞、重碰目标或超时未停稳；先检查该例日志，程序不会跳到下一例 |
-| 容器被 watchdog 终止 | 内存/显存触线或超时；关闭其他程序，或临时降低并发需求后重试 |
-| `Q3_GUI=1` 但无窗口 | `DISPLAY` 为空、Xauthority 不可用，或渲染缓存目录不可写 |
+| 现象                                                        | 原因与处理                                                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `Set BAJIE_SIM_DIR ...` / `Missing output directory...` | 环境变量未设、`Q3_RESULT_DIR` 不存在，或场景缺少 `models/`                              |
+| `未启动：系统可用内存不足 12800 MiB`                      | 先关闭浏览器/IDE/其他仿真；这是启动前的硬门槛                                               |
+| `未启动：显存余量不足 6000 MiB`                           | 释放显存，确认 `nvidia-smi` 可用且 NVIDIA 容器运行时已配置                                |
+| `Missing official scene prim` / `Missing toy colliders` | 官方资源不完整或目录层级不对，重新下载完整 `models/`                                      |
+| `ROS handshake failed`                                    | Bridge 未启用或 ROS 域冲突；确认镜像内含 `isaacsim.ros2.bridge`，并避免与宿主其他演示同域 |
+| `Official FK does not match sim`                          | URDF 与场景模型不是同一版本，或底盘/玩具摆位错误                                            |
+| `no verified fingertip contact`                           | 规划路径未真正触碰；先确认玩具位置与 `models/` 完整，再单独用 `--case` 排查             |
+| `return_home=failed`                                      | 归位遇碰撞、重碰目标或超时未停稳；先检查该例日志，程序不会跳到下一例                        |
+| 容器被 watchdog 终止                                        | 内存/显存触线或超时；关闭其他程序，或临时降低并发需求后重试                                 |
+| `Q3_GUI=1` 但无窗口                                       | `DISPLAY` 为空、Xauthority 不可用，或渲染缓存目录不可写                                   |
 
 ## 注意事项
 
